@@ -2,20 +2,17 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { toast } from 'react-toastify';
 import customerService from '../../Services/customer.service';
 import paymentService  from '../../Services/payment.service';
-import { formatCurrency, formatDate } from '../../Utils/helpers';
+// import { formatCurrency, formatDate } from '../../Utils/helpers';
 import {
   viewBreakdown,
   downloadBreakdown,
   printBreakdown,
   fmtINR,
-  roundRent,
   toFloat,
   toMonthLabel,
 } from './PaymentBreakdownUtils';
 
 /* ─── Pure helpers ────────────────────────────────────────────────────────── */
-const round2 = (v) => Math.round(toFloat(v) * 100) / 100;
-
 const getRentMonth = (dateStr) => {
   if (!dateStr) return '';
   const d    = new Date(dateStr);
@@ -317,7 +314,7 @@ const AdjustmentSection = ({
   const adj         = parseFloat(adjustmentAmount) || 0;
   const adjustedNet = Math.round(baseNet + adj);
 
-  const { hasGst, cgstRate, sgstRate, totalGstRate, gstNo } = derived.gstProps;
+  const { hasGst, cgstRate, sgstRate, gstNo } = derived.gstProps;
   const adjCgst        = hasGst ? Math.round(adjustedNet * cgstRate / 100) : 0;
   const adjSgst        = hasGst ? Math.round(adjustedNet * sgstRate / 100) : 0;
   const adjGst         = adjCgst + adjSgst;

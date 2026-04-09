@@ -13,6 +13,7 @@ const r2 = (v) => Math.round((parseFloat(v) || 0) * 100) / 100;
 // ─── GST calculation ──────────────────────────────────────────────────────────
 // GST base = net_payout (gross minus TDS) — matches payment controller.
 // Prefers backend-computed fields (cgst_amount / sgst_amount) when present.
+// eslint-disable-next-line
 const calcGST = (p) => {
   if (p.cgst_amount !== undefined && p.sgst_amount !== undefined) {
     const cgstAmt  = r2(p.cgst_amount);
@@ -158,6 +159,7 @@ const pdfInfoGrid = (doc, pairs, y, colCount = 2) => {
 };
 
 // ─── PDF helper: a single highlighted amount row ──────────────────────────────
+// eslint-disable-next-line
 const pdfAmtRow = (doc, label, value, y, labelColor, valueColor, bgColor) => {
   if (bgColor) {
     doc.setFillColor(...bgColor);
@@ -544,7 +546,10 @@ const ReceiptList = () => {
   const [search,     setSearch]     = useState('');
 
   useEffect(() => { fetchCustomers(); }, []);
-  useEffect(() => { fetchPayments(); }, [pagination.page, filters]);
+  useEffect(() => { 
+    fetchPayments(); 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pagination.page, filters]);
 
   const fetchCustomers = async () => {
     try {

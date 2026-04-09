@@ -328,6 +328,7 @@ const InitiatePayment = () => {
   const [processing,    setProcessing]    = useState(false);
   const [secondsLeft,   setSecondsLeft]   = useState(getSecondsLeft());
   const [ebReady,       setEbReady]       = useState(false);
+  // eslint-disable-next-line
   const [activeOrderIds, setActiveOrderIds] = useState([]);
   const [expandedKeys,  setExpandedKeys]  = useState(new Set());
   const [splitModal,    setSplitModal]    = useState(null);   // group object
@@ -446,6 +447,7 @@ const InitiatePayment = () => {
   }, []);
 
   // ── Pay via Easebuzz ───────────────────────────────────────────────────────
+  // eslint-disable-next-line
   const handlePay = useCallback(async () => {
     if (!selectedKeys.length) { toast.error('Select at least one payment'); return; }
 

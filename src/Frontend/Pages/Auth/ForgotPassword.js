@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { toast } from 'react-toastify';
 import api from '../../Config/api';
 
-const TOTAL_STEPS = 3;
+// const TOTAL_STEPS = 3;
 const OTP_LENGTH  = 6;
 const OTP_EXPIRY_SECONDS = 120; // 2 minutes countdown
 
@@ -14,6 +14,7 @@ const ForgotPassword = ({ onSuccess, onBack }) => {
   const [passwords,    setPasswords]    = useState({ newPassword: '', confirmPassword: '' });
   const [showPw,       setShowPw]       = useState({ new: false, confirm: false });
   const [loading,      setLoading]      = useState(false);
+  // eslint-disable-next-line no-unused-vars
   const [mounted,      setMounted]      = useState(false);
   const [countdown,    setCountdown]    = useState(0);
   const [canResend,    setCanResend]    = useState(false);
@@ -73,24 +74,6 @@ const ForgotPassword = ({ onSuccess, onBack }) => {
   };
 
   // ── Step 1: Send OTP ────────────────────────────────────────
-  // const handleSendOTP = async (e) => {
-  //   e.preventDefault();
-  //   if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-  //     toast.error('Please enter a valid email address');
-  //     return;
-  //   }
-  //   setLoading(true);
-  //   try {
-  //     await api.post('/auth/forgot-password', { email: email.trim().toLowerCase() });
-  //     toast.success('OTP sent to your email');
-  //     setStep(2);
-  //     startCountdown();
-  //   } catch (err) {
-  //     toast.error(err?.response?.data?.error || 'Failed to send OTP. Please try again.');
-  //   } finally {
-  //     setLoading(false);
-  //   }
-  // };
   const handleSendOTP = async (e) => {
   e.preventDefault();
   if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
@@ -106,7 +89,7 @@ const ForgotPassword = ({ onSuccess, onBack }) => {
     setStep(2);
     startCountdown();
   } catch (err) {
-    // ✅ Shows real backend error: "No account found with this email address..."
+    //Shows real backend error: "No account found with this email address..."
     toast.error(
       err?.response?.data?.error ||
       err?.response?.status === 429
@@ -665,7 +648,7 @@ const ForgotPassword = ({ onSuccess, onBack }) => {
         {step === 3 && (() => {
           const { newPassword, confirmPassword } = passwords;
           const passwordsMatch = newPassword && confirmPassword && newPassword === confirmPassword;
-          const passwordsMismatch = confirmPassword && newPassword !== confirmPassword;
+          // const passwordsMismatch = confirmPassword && newPassword !== confirmPassword;
           return (
             <form onSubmit={handleResetPassword} noValidate>
               <div className="fp-header">

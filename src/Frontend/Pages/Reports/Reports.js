@@ -3,7 +3,7 @@ import * as XLSX from 'xlsx';
 import { toast } from 'react-toastify';
 import paymentService from '../../Services/payment.service';
 import customerService from '../../Services/customer.service';
-import { formatCurrency, formatDate } from '../../Utils/helpers';
+import { formatDate } from '../../Utils/helpers';
 
 // ─── Rounding helper — always 2 decimal places (paise precision) ─────────────
 const r2 = (v) => Math.round((parseFloat(v) || 0) * 100) / 100;

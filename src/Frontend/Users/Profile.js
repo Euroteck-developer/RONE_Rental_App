@@ -25,6 +25,7 @@ const Profile = () => {
       }
     };
     fetchProfile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authUser?.id]);
 
   const getInitials = (name) => {

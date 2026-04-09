@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import customerService from '../../Services/customer.service';
-import { formatCurrency, formatDate, maskBankAccount } from '../../Utils/helpers';
+import { formatCurrency, maskBankAccount } from '../../Utils/helpers';
 
 const CustomerDetails = () => {
   const { id } = useParams();
@@ -12,6 +12,7 @@ const CustomerDetails = () => {
 
   useEffect(() => {
     fetchCustomer();
+    //eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const fetchCustomer = async () => {

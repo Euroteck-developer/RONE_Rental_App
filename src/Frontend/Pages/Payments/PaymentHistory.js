@@ -330,7 +330,10 @@ const PaymentHistory = () => {
   const [expandedIds, setExpandedIds] = useState(new Set());
   const [splitModal,  setSplitModal]  = useState(null);
 
-  useEffect(() => { fetchPaymentHistory(); }, [pagination.page, filters]);
+  useEffect(() => { 
+    fetchPaymentHistory(); 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pagination.page, filters]);
 
   const fetchPaymentHistory = async () => {
     try {

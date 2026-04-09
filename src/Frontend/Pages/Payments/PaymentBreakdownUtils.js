@@ -1,5 +1,3 @@
-'use strict';
-
 /* ─── Formatting helpers ─────────────────────────────────────────────────── */
 
 export const toFloat = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
@@ -96,7 +94,10 @@ export const generateBreakdownHTML = ({ calculation, paymentDate }) => {
     tdsApplied = false, tdsExempt = false, tdsRate = 10, tdsThreshold = 50000,
     escalationRate = 0, yearsElapsed = 0,
     hasGst = false, gstNo = '', cgstRate = 9, sgstRate = 9, totalGstRate = 18,
-    cgstAmount = 0, sgstAmount = 0, totalGstAmount = 0, totalInvoice = 0, netBankTransfer = 0,
+    cgstAmount = 0, sgstAmount = 0, 
+    // eslint-disable-next-line
+    totalGstAmount = 0, 
+    totalInvoice = 0, netBankTransfer = 0,
     totalSale = 0, totalReceived = 0, receivedPct = 0, is100Pct = false,
     activeInstallments = 0, totalInstallments = 0,
     rentCalculationDetails: d = {},
@@ -566,7 +567,10 @@ export const downloadBreakdown = async (payload, onProgress) => {
       tdsApplied = false, tdsExempt = false, tdsRate = 10, tdsThreshold = 50000,
       escalationRate = 0, yearsElapsed = 0,
       hasGst = false, gstNo = '', cgstRate = 9, sgstRate = 9, totalGstRate = 18,
-      cgstAmount = 0, sgstAmount = 0, totalGstAmount = 0, totalInvoice = 0, netBankTransfer = 0,
+      cgstAmount = 0, sgstAmount = 0, 
+      // eslint-disable-next-line
+      totalGstAmount = 0, 
+      totalInvoice = 0, netBankTransfer = 0,
       totalSale = 0, totalReceived = 0, receivedPct = 0, is100Pct = false,
       activeInstallments = 0, totalInstallments = 0,
       rentCalculationDetails: d = {},

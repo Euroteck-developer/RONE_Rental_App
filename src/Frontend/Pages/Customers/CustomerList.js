@@ -214,7 +214,10 @@ const CustomerList = () => {
     ...Array.from({ length: 30 }, (_, i) => ({ value: String(i + 1), label: `Floor ${i + 1}` }))
   ];
 
-  useEffect(() => { fetchCustomers(); }, [pagination.page, filters]);
+  useEffect(() => { 
+    fetchCustomers(); 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pagination.page, filters]);
 
   const fetchCustomers = async () => {
     try {

@@ -69,6 +69,7 @@ const GenerateMonthlyPayments = () => {
   const totalNet    = payments.reduce((s, p) => s + parseFloat(p.net_payout      || 0), 0);
   const totalCgst   = payments.reduce((s, p) => s + parseFloat(p.cgst_amount     || 0), 0);
   const totalSgst   = payments.reduce((s, p) => s + parseFloat(p.sgst_amount     || 0), 0);
+  // eslint-disable-next-line
   const totalGst    = payments.reduce((s, p) => s + parseFloat(p.total_gst_amount|| 0), 0);
   // Net Transfer = Net Rent + GST (this is the ONE final amount)
   const totalTransfer = payments.reduce((s, p) => s + parseFloat(p.net_transfer  || p.net_payout || 0), 0);

@@ -12,7 +12,6 @@ const MONTH_NAMES = {
   '09':'September','10':'October','11':'November','12':'December',
 };
 const fmtMonth = (ym) => { if (!ym) return ''; const [y, m] = ym.split('-'); return `${MONTH_NAMES[m] || m} ${y}`; };
-const fmtInr   = (v)  => `Rs. ${parseFloat(v || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 // GST computed from backend fields (cgst_amount, sgst_amount, total_payable already returned by getAllTDS)
 // For grouped rows we re-compute by summing per-row GST amounts.

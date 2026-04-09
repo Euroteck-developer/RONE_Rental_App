@@ -88,7 +88,10 @@ const CustomerForm = () => {
   const splitOk           = Math.abs(splitSum - 100) < 0.01;
 
   // ── Load existing customer in edit mode ────────────────────────────────────
-  useEffect(() => { if (isEdit) fetchCustomer(); }, [id]);
+  useEffect(() => { 
+    if (isEdit) fetchCustomer(); 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   const fetchCustomer = async () => {
     try {
@@ -583,6 +586,7 @@ const CustomerForm = () => {
 
             {/* Split rows */}
             {payoutSplits.map((sp, idx) => {
+              // eslint-disable-next-line
               const splitAmount = splitOk
                 ? null
                 : null; // computed later per-payment

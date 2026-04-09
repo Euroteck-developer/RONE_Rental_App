@@ -318,7 +318,10 @@ const PaymentSchedule = () => {
     agreementType: '',
   });
 
-  useEffect(() => { fetchSchedule(); }, [filters]);
+  useEffect(() => { 
+    fetchSchedule(); 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters]);
 
   const fetchSchedule = async () => {
     try {
@@ -489,7 +492,7 @@ const PaymentSchedule = () => {
                     const net      = parseFloat(payment.net_payout || 0);
                     const entries  = splits ? computeSplitAmounts(net, splits) : null;
                     const isExpanded = expanded.has(payment.id);
-                    const hasMultiSplit = entries && entries.length > 1;
+                    // const hasMultiSplit = entries && entries.length > 1;
 
                     return (
                       <React.Fragment key={payment.id}>

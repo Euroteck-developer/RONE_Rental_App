@@ -17,8 +17,14 @@ const Escalation = () => {
   const [generating, setGenerating] = useState(false);
   const [processing, setProcessing] = useState({});
 
-  useEffect(() => { fetchEscalations(); }, [pagination.page, filterStatus, filterType]);
-  useEffect(() => { fetchStats(); }, []);
+  useEffect(() => { 
+    fetchEscalations(); 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pagination.page, filterStatus, filterType]);
+
+  useEffect(() => { 
+    fetchStats(); 
+  }, []);
 
   // ── Fetch from escalations table (real records) ─────────────
   const fetchEscalations = async () => {
@@ -90,6 +96,7 @@ const Escalation = () => {
     }
   };
 
+  // eslint-disable-next-line
   const handleFilterChange = () => {
     setPagination(prev => ({ ...prev, page: 1 }));
     fetchEscalations();

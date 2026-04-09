@@ -75,7 +75,10 @@ const PaymentView = () => {
   const [showModal,    setShowModal]    = useState(false);
   const [completeForm, setCompleteForm] = useState({ transactionReference: '', bankReference: '' });
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => { 
+    load(); 
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   const load = async () => {
     try {
