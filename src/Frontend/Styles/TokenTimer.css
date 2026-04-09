@@ -1,0 +1,36 @@
+/* Layout */
+.timer-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* Shadow + rounded */
+.timer-container .flip-clock__card {
+  border-radius: 10px;
+  box-shadow: 0 6px 15px rgba(0, 0, 0, 0.3);
+  font-weight: 600;
+}
+
+/* Minutes (first block) */
+.timer-container .flip-clock__piece:nth-child(1) .flip-clock__card {
+  background-color: #0d6efd !important; /* Blue */
+  color: #fff !important;
+}
+
+/* Seconds (second block) */
+.timer-container .flip-clock__piece:nth-child(2) .flip-clock__card {
+  background-color: #198754 !important; /* Green */
+  color: #fff !important;
+}
+
+/* Critical state */
+.timer-container.critical .flip-clock__card {
+  background-color: #dc3545 !important; /* Red */
+  color: #fff !important;
+}
+
+/* Optional: smooth transition */
+.flip-clock__card {
+  transition: background-color 0.3s ease;
+}

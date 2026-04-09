@@ -1,0 +1,339 @@
+/* ============================================================
+   MonthlySummary.css
+   ============================================================ */
+
+/* ── Container ─────────────────────────────────────────────── */
+.ms-container {
+  background: #ffffff;
+  padding: 28px;
+  border-radius: 16px;
+  box-shadow: 0 2px 16px rgba(0, 0, 0, 0.07);
+}
+
+/* ── Header row ─────────────────────────────────────────────── */
+.ms-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.ms-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0;
+  letter-spacing: -0.3px;
+}
+
+.ms-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ms-month-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #64748b;
+  margin-bottom: 0;
+  margin-right: 6px;
+}
+
+.ms-month-input {
+  width: 158px !important;
+  font-size: 0.85rem;
+  border-radius: 8px !important;
+  border-color: #e2e8f0 !important;
+  color: #334155;
+}
+
+.ms-month-input:focus {
+  border-color: #6366f1 !important;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12) !important;
+}
+
+/* ── Stat Cards Grid ─────────────────────────────────────────── */
+.ms-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.ms-card {
+  padding: 22px 20px;
+  border-radius: 14px;
+  color: #ffffff;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.22s ease, box-shadow 0.22s ease;
+  cursor: default;
+}
+
+.ms-card::after {
+  content: '';
+  position: absolute;
+  top: -18px;
+  right: -18px;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  pointer-events: none;
+}
+
+.ms-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.15);
+}
+
+.ms-card-icon {
+  font-size: 1.4rem;
+  margin-bottom: 10px;
+  opacity: 0.9;
+  display: block;
+}
+
+.ms-card-value {
+  font-size: 1.2rem;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 5px;
+  letter-spacing: -0.3px;
+}
+
+.ms-card-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  opacity: 0.85;
+  letter-spacing: 0.3px;
+}
+
+/* Card colour variants */
+.ms-card--primary { background: linear-gradient(135deg, #4f46e5 0%, #2563eb 100%); }
+.ms-card--success { background: linear-gradient(135deg, #10b981 0%, #059669 100%); }
+.ms-card--info    { background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%); }
+.ms-card--warning { background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); }
+.ms-card--dark    { background: linear-gradient(135deg, #475569 0%, #1e293b 100%); }
+
+/* ── Preview Table Card ──────────────────────────────────────── */
+.ms-preview-card {
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 14px !important;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05) !important;
+}
+
+.ms-preview-header {
+  background: #f8fafc !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+  padding: 14px 18px !important;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.ms-preview-header-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #334155;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ms-preview-header-title i {
+  color: #6366f1;
+  font-size: 1rem;
+}
+
+/* ── Table overrides ─────────────────────────────────────────── */
+.ms-table {
+  margin: 0;
+  font-size: 0.855rem;
+}
+
+.ms-table thead th {
+  background: #f1f5f9;
+  color: #475569;
+  font-weight: 600;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 2px solid #e2e8f0;
+  padding: 11px 14px;
+  white-space: nowrap;
+}
+
+.ms-table tbody tr {
+  transition: background 0.15s ease;
+}
+
+.ms-table tbody tr:hover {
+  background: #f8faff !important;
+}
+
+.ms-table tbody td {
+  padding: 10px 14px;
+  color: #374151;
+  vertical-align: middle;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.ms-table tbody td.ms-td-serial {
+  color: #94a3b8;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.ms-table tbody td.ms-td-name {
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.ms-table tbody td code {
+  background: #f1f5f9;
+  color: #6366f1;
+  border-radius: 5px;
+  padding: 2px 6px;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.ms-table tbody td.ms-td-amount {
+  font-variant-numeric: tabular-nums;
+}
+
+.ms-table tbody td.ms-td-tds {
+  color: #d97706;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.ms-table tbody td.ms-td-net {
+  color: #059669;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Totals footer */
+.ms-table tfoot tr td {
+  background: #f1f5f9;
+  font-weight: 700;
+  font-size: 0.855rem;
+  border-top: 2px solid #e2e8f0 !important;
+  padding: 11px 14px;
+}
+
+.ms-table tfoot td.ms-td-tds { color: #d97706; }
+.ms-table tfoot td.ms-td-net { color: #059669; }
+
+/* ── Empty & loading states ──────────────────────────────────── */
+.ms-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 20px;
+  color: #94a3b8;
+}
+
+.ms-empty i {
+  font-size: 2.8rem;
+  margin-bottom: 10px;
+  opacity: 0.4;
+}
+
+.ms-empty p {
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+.ms-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  gap: 10px;
+  color: #94a3b8;
+}
+
+.ms-loading p {
+  font-size: 0.82rem;
+  margin: 0;
+}
+
+/* ── Badge ───────────────────────────────────────────────────── */
+.ms-badge {
+  background: #ede9fe;
+  color: #6d28d9;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 20px;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────── */
+.ms-btn-preview {
+  font-size: 0.82rem;
+  border-radius: 8px !important;
+  border-color: #cbd5e1 !important;
+  color: #475569 !important;
+  background: #fff !important;
+  padding: 5px 12px !important;
+  transition: all 0.18s ease !important;
+}
+
+.ms-btn-preview:hover {
+  background: #f1f5f9 !important;
+  border-color: #94a3b8 !important;
+}
+
+.ms-btn-preview.active-preview {
+  background: #f1f5f9 !important;
+  border-color: #6366f1 !important;
+  color: #6366f1 !important;
+}
+
+.ms-btn-download {
+  font-size: 0.82rem;
+  border-radius: 8px !important;
+  background: linear-gradient(135deg, #10b981, #059669) !important;
+  border: none !important;
+  color: #fff !important;
+  padding: 5px 14px !important;
+  font-weight: 600 !important;
+  transition: opacity 0.18s ease, transform 0.18s ease !important;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.35) !important;
+}
+
+.ms-btn-download:hover:not(:disabled) {
+  opacity: 0.9;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4) !important;
+}
+
+.ms-btn-download:disabled {
+  opacity: 0.65 !important;
+  cursor: not-allowed;
+}
+
+/* ── Responsive ──────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .ms-container { padding: 18px; }
+  .ms-card-value { font-size: 1.05rem; }
+  .ms-header { flex-direction: column; align-items: flex-start; }
+  .ms-controls { width: 100%; }
+  .ms-month-input { width: 100% !important; flex: 1; }
+  .ms-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 480px) {
+  .ms-grid { grid-template-columns: 1fr; }
+}
