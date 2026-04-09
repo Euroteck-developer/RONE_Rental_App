@@ -2,6 +2,10 @@
   "name": "my-app",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "Backend",
+    "src"
+  ],
   "dependencies": {
     "@leenguyen/react-flip-clock-countdown": "^1.7.2",
     "@testing-library/dom": "^10.4.1",
@@ -32,7 +36,10 @@
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "stat:backend": "cd Backend && npm start",
+    "start:all": "npm start& cd Backend && npm start",
+    "install:backend": "npm install --prefix Backend"
   },
   "eslintConfig": {
     "extends": [
