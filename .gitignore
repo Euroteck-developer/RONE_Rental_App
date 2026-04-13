@@ -8,7 +8,7 @@
 # node modules
 node_modules/
 Frontend/node_modules/
-Bcakend/node_modules/
+Backend/node_modules/
 
 # build files
 build/

@@ -45,7 +45,7 @@ const verifyConnection = async () => {
 // ─────────────────────────────────────────────────────────────
 const baseTemplate = ({ previewText, bodyContent }) => {
   const appName  = process.env.APP_NAME  || 'R-ONE';
-  const appUrl   = process.env.APP_URL   || '#';
+  const appUrl   = process.env.APP_URL   || 'https://rone-frontend-dev.azurewebsites.net';
   const support  = process.env.SMTP_FROM_EMAIL || 'support@r-one.com';
   const year     = new Date().getFullYear();
 
