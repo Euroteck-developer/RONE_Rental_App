@@ -1,7 +1,7 @@
 import axios from 'axios';
 // "http://localhost:9000/api"
 
-const API_BASE_URL = process.env.REACT_APP_API_URL;
+const API_BASE_URL = process.env.REACT_APP_API_URL || "https://rone-backend-dev.azurewebsites.net/api";
 
 const api = axios.create({
   baseURL: API_BASE_URL,

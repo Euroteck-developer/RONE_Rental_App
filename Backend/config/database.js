@@ -7,18 +7,19 @@ const pool = new Pool({
   database: process.env.DB_NAME,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
-
-
-
   max: Number(process.env.DB_MAX_CONNECTIONS),
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
   statement_timeout: 30000,
+  ssl: {
+    rejectUnauthorized: false
+  }
 });
 
 pool.on('error', (err) => {
-  console.error('Unexpected database error', err);
-  process.exit(1);
+  console.error('Unexpected database error', err.message);
+  // console.error('Unexpected database error', err);
+  // process.exit(1);
 });
 
 const query = async (text, params) => {
