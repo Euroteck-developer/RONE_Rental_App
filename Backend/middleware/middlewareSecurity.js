@@ -16,7 +16,8 @@ const securityHeaders = helmet({
 
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
   ? process.env.ALLOWED_ORIGINS.split(',')
-  : ['http://localhost:3000'];
+  : ['https://rone-frontend-dev.azurewebsites.net']
+  // : ['http://localhost:3000'];
 
 const corsOptions = cors({
   origin: (origin, callback) => {
