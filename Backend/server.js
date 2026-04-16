@@ -83,17 +83,39 @@ const tdsRoutes = require('./routes/tdsRoutes');
 
 const app = express();
 
-
+/**
+ * 🔥 1. CORS (MUST BE FIRST)
+ * Handles preflight requests automatically
+ */
 app.use(cors(corsOptions));
+// app.options(cors(corsOptions));
+
+/**
+ * 🔥 2. BASIC MIDDLEWARE
+ */
 app.set('trust proxy', 1);
-app.use(securityHeaders);
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-app.use(preventInjection);
+/**
+ * 🔥 3. SECURITY MIDDLEWARE
+ */
+app.use(securityHeaders);
+
+/**
+ * 🔥 4. LOGGING
+ */
 app.use(morgan('dev'));
 
+/**
+ * 🔥 5. CUSTOM MIDDLEWARE (AFTER PARSING)
+ */
+app.use(preventInjection);
+
+/**
+ * 🔥 6. ROUTES
+ */
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/customers', customerRoutes);
@@ -103,6 +125,9 @@ app.use('/api/escalations', escalationRoutes);
 app.use('/api/financial', financialRoutes);
 app.use('/api/tds', tdsRoutes);
 
+/**
+ * 🔥 HEALTH CHECK ROUTE
+ */
 app.get('/', (_req, res) => {
   res.json({
     status: 'success',
@@ -111,6 +136,9 @@ app.get('/', (_req, res) => {
   });
 });
 
+/**
+ * 🔥 404 HANDLER
+ */
 app.use((_req, res) => {
   res.status(404).json({
     success: false,
@@ -118,6 +146,9 @@ app.use((_req, res) => {
   });
 });
 
+/**
+ * 🔥 GLOBAL ERROR HANDLER
+ */
 app.use((err, _req, res, _next) => {
   console.error('Error:', err.message);
 
@@ -134,7 +165,9 @@ app.use((err, _req, res, _next) => {
   });
 });
 
-
+/**
+ * 🔥 START SERVER (AZURE SAFE)
+ */
 const PORT = process.env.PORT || 8080;
 
 app.listen(PORT, () => {
