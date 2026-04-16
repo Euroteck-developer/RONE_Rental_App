@@ -50,8 +50,12 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ success: false, error: 'Internal server error' });
 });
 
-app.get('/health', (_req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+app.get('/', (_req, res) => {
+  res.json({
+    status: 'success',
+    message: 'API is running smoothly',
+    timestamp: new Date().toISOString()
+  });
 });
 
 const PORT = process.env.PORT || 8080;
