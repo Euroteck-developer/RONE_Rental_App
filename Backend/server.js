@@ -66,10 +66,12 @@
 const express = require('express');
 const morgan = require('morgan');
 const cors = require('cors');
+const swaggerUi = require('swagger-ui-express');
+const swaggerSpec = require('./swagger');
 require('dotenv').config();
 
 const { securityHeaders, corsOptions } = require('./middleware/middlewareSecurity');
-const { preventInjection } = require('./middleware/validator');
+// const { preventInjection } = require('./middleware/validator');
 
 // Routes
 const authRoutes = require('./routes/authRoutes');
@@ -83,39 +85,30 @@ const tdsRoutes = require('./routes/tdsRoutes');
 
 const app = express();
 
-/**
- * 🔥 1. CORS (MUST BE FIRST)
- * Handles preflight requests automatically
- */
-app.use(cors(corsOptions));
-// app.options(cors(corsOptions));
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
+  explorer: true,
+  customCss: '.swagger-ui .topbar { display: none }',
+  customSiteTitle: 'API Docs',
+}));
 
-/**
- * 🔥 2. BASIC MIDDLEWARE
- */
+app.get('/api/docs.json', (_req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.send(swaggerSpec);
+});
+
+app.use(cors(corsOptions));
+
 app.set('trust proxy', 1);
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-/**
- * 🔥 3. SECURITY MIDDLEWARE
- */
 app.use(securityHeaders);
 
-/**
- * 🔥 4. LOGGING
- */
 app.use(morgan('dev'));
 
-/**
- * 🔥 5. CUSTOM MIDDLEWARE (AFTER PARSING)
- */
-app.use(preventInjection);
+// app.use(preventInjection);
 
-/**
- * 🔥 6. ROUTES
- */
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/customers', customerRoutes);
@@ -125,9 +118,6 @@ app.use('/api/escalations', escalationRoutes);
 app.use('/api/financial', financialRoutes);
 app.use('/api/tds', tdsRoutes);
 
-/**
- * 🔥 HEALTH CHECK ROUTE
- */
 app.get('/', (_req, res) => {
   res.json({
     status: 'success',
