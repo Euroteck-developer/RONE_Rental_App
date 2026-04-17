@@ -4,7 +4,7 @@ import api from '../../Config/api';
 
 // const TOTAL_STEPS = 3;
 const OTP_LENGTH  = 6;
-const OTP_EXPIRY_SECONDS = 120; // 2 minutes countdown
+const OTP_EXPIRY_SECONDS = 300; // 5 minutes countdown
 
 const ForgotPassword = ({ onSuccess, onBack }) => {
   const [step,         setStep]         = useState(1);
@@ -90,12 +90,11 @@ const ForgotPassword = ({ onSuccess, onBack }) => {
     startCountdown();
   } catch (err) {
     //Shows real backend error: "No account found with this email address..."
-    toast.error(
-      err?.response?.data?.error ||
-      err?.response?.status === 429
-        ? 'Too many attempts. Please wait 10 minutes.'
-        : 'Failed to send OTP. Please try again.'
-    );
+  toast.error(
+    err?.response?.status === 429
+    ? 'Too many attempts. Please wait 10 minutes.'
+    : err?.response?.data?.error || 'Failed to send OTP. Please try again.'
+  );
   } finally {
     setLoading(false);
   }
