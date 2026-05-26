@@ -1,8 +1,17 @@
 import api from '../Config/api';
 
 const paymentService = {
-  calculatePayment: async (customerId, paymentDate) => {
-    const res = await api.post('/payments/calculate', { customerId, paymentDate });
+
+  // ── KEY FIX: Pass customerUnitId so backend can load the correct
+  //    payment_closure_date → prorated rent works correctly ──────────────────
+  calculatePayment: async (customerId, paymentDate, customerUnitId = null) => {
+    const payload = { paymentDate };
+    if (customerUnitId) {
+      payload.customerUnitId = customerUnitId;   // ← unit-based lookup (prorated)
+    } else if (customerId) {
+      payload.customerId = customerId;            // ← legacy fallback
+    }
+    const res = await api.post('/payments/calculate', payload);
     return res.data.data;
   },
 
@@ -31,21 +40,16 @@ const paymentService = {
     return { success: true, data: res.data.data, message: res.data.message };
   },
 
-  // ── Easebuzz gateway ──────────────────────────────────────────────────────
-  // Step 1: Backend generates hash, calls Easebuzz initiateLink, returns access_key
   createEasebuzzOrder: async (paymentIds) => {
     const res = await api.post('/payments/easebuzz/create-order', { paymentIds });
     return { success: true, data: res.data.data };
   },
 
-  // Step 2: Frontend calls this after EasebuzzCheckout.onResponse fires with status=success
   verifyEasebuzzPayment: async (verificationData) => {
-    // verificationData: { paymentIds, easebuzzResponse }
     const res = await api.post('/payments/easebuzz/verify', verificationData);
     return { success: true, data: res.data.data, message: res.data.message };
   },
 
-  // Step 3 (on failure/dismiss): Notify backend to reset payment status
   reportEasebuzzFailure: async (paymentIds, txnid, easebuzzResponse) => {
     try {
       await api.post('/payments/easebuzz/failure', { paymentIds, txnid, easebuzzResponse });
@@ -67,7 +71,7 @@ const paymentService = {
 
   getPaymentStats: async (month = null, agreementType = null) => {
     const params = {};
-    if (month) params.month = month;
+    if (month)         params.month         = month;
     if (agreementType) params.agreementType = agreementType;
     const res = await api.get('/payments/stats', { params });
     return { success: true, data: res.data.data };
@@ -86,6 +90,5 @@ const paymentService = {
     return { success: true, data: res.data.data };
   },
 };
-
 
 export default paymentService;

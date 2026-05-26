@@ -1,15 +1,6 @@
 import { parse } from 'date-fns';
 
 // Format currency
-// export const formatCurrency = (amount) => {
-//   return new Intl.NumberFormat('en-IN', {
-//     style: 'currency',
-//     currency: 'INR',
-//     minimumFractionDigits: 0,
-//     maximumFractionDigits: 0
-//   }).format(amount);
-// };
-
 export const formatCurrency = (amount, forPDF = false) => {
   const formatted = new Intl.NumberFormat('en-IN', {
     style: 'currency',
@@ -23,16 +14,6 @@ export const formatCurrency = (amount, forPDF = false) => {
 
 
 // Format date
-// export const formatDate = (date, formatStr = 'dd-MMM-yyyy') => {
-//   if (!date) return '-';
-//   try {
-//     const dateObj = typeof date === 'string' ? parseISO(date) : date;
-//     return isValid(dateObj) ? format(dateObj, formatStr) : '-';
-//   } catch {
-//     return '-';
-//   }
-// };
-
 export const formatDate = (date) => {
   if (!date) return '';
   

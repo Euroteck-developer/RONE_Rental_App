@@ -1,60 +1,55 @@
+'use strict';
+
 const { query, transaction } = require('../config/database');
 const crypto = require('crypto');
 const axios  = require('axios');
 
-// ─── Environment ───────────────────────────────────────────────────────────────
+// ─── Environment ────────────────────────────────────────────────────────────
 const IS_DEV = process.env.NODE_ENV !== 'production';
 
 const EASEBUZZ_KEY  = process.env.EASEBUZZ_KEY  || 'TESTKEY';
 const EASEBUZZ_SALT = process.env.EASEBUZZ_SALT || 'TESTSALT';
 const EASEBUZZ_ENV  = process.env.EASEBUZZ_ENV  || 'test';
-
-const DEV_RESULT = process.env.EASEBUZZ_DEV_RESULT || 'success';
+const DEV_RESULT    = process.env.EASEBUZZ_DEV_RESULT || 'success';
 
 const EASEBUZZ_INITIATE_URL =
   EASEBUZZ_ENV === 'prod'
     ? 'https://pay.easebuzz.in/payment/initiateLink'
     : 'https://testpay.easebuzz.in/payment/initiateLink';
 
-// ─── Easebuzz hash helpers ─────────────────────────────────────────────────────
-const generateInitiateHash = ({ txnid, amount, productinfo, firstname, email, udf1 = '', udf2 = '', udf3 = '', udf4 = '', udf5 = '' }) => {
+// ─── Easebuzz helpers ────────────────────────────────────────────────────────
+const generateInitiateHash = ({ txnid, amount, productinfo, firstname, email, udf1='', udf2='', udf3='', udf4='', udf5='' }) => {
   const str = `${EASEBUZZ_KEY}|${txnid}|${amount}|${productinfo}|${firstname}|${email}|${udf1}|${udf2}|${udf3}|${udf4}|${udf5}||||||${EASEBUZZ_SALT}`;
   return crypto.createHash('sha512').update(str).digest('hex');
 };
-const generateResponseHash = ({ status, txnid, amount, productinfo, firstname, email, udf1 = '', udf2 = '', udf3 = '', udf4 = '', udf5 = '' }) => {
+const generateResponseHash = ({ status, txnid, amount, productinfo, firstname, email, udf1='', udf2='', udf3='', udf4='', udf5='' }) => {
   const str = `${EASEBUZZ_SALT}|${status}||||||${udf5}|${udf4}|${udf3}|${udf2}|${udf1}|${email}|${firstname}|${productinfo}|${amount}|${txnid}|${EASEBUZZ_KEY}`;
   return crypto.createHash('sha512').update(str).digest('hex');
 };
-const generateTxnId = () =>
-  `TXN_${Date.now()}_${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
-
+const generateTxnId = () => `TXN_${Date.now()}_${Math.random().toString(36).substring(2,9).toUpperCase()}`;
 const mockInitiateLink = ({ txnid, amount, productinfo, firstname, email, udf1 }) => {
-  if (DEV_RESULT === 'pending')
-    return { data: { status: 0, error_desc: '[DEV] Simulated Easebuzz initiation error' } };
-  const mockAccessKey = `DEV_ACCESS_${txnid}`;
+  if (DEV_RESULT === 'pending') return { data: { status: 0, error_desc: '[DEV] Simulated Easebuzz initiation error' } };
   console.info(`[EASEBUZZ DEV] Mock initiateLink OK  txnid:${txnid}  amount:₹${amount}`);
-  return { data: { status: 1, data: mockAccessKey } };
+  return { data: { status: 1, data: `DEV_ACCESS_${txnid}` } };
 };
-
-const buildMockEasebuzzResponse = ({ txnid, amount, productinfo, firstname, email, udf1 = '', udf2 = '', udf3 = '', udf4 = '', udf5 = '' }) => {
-  const status    = DEV_RESULT === 'failure' ? 'failure' : 'success';
+const buildMockEasebuzzResponse = ({ txnid, amount, productinfo, firstname, email, udf1='', udf2='', udf3='', udf4='', udf5='' }) => {
+  const status = DEV_RESULT === 'failure' ? 'failure' : 'success';
   const easepayid = `DEV_PAY_${Date.now()}`;
   const hash = generateResponseHash({ status, txnid, amount, productinfo, firstname, email, udf1, udf2, udf3, udf4, udf5 });
   return { txnid, amount, productinfo, firstname, email, udf1, udf2, udf3, udf4, udf5, status, easepayid, hash, payment_mode: 'upi', phone: '9999999999' };
 };
 
-// ─── Math helpers ─────────────────────────────────────────────────────────────
-const toFloat  = (v, fb = 0) => { const n = parseFloat(v); return Number.isFinite(n) ? n : fb; };
-const round2   = (v)         => parseFloat(toFloat(v).toFixed(2));
+// ─── Math helpers ────────────────────────────────────────────────────────────
+const toFloat      = (v, fb = 0) => { const n = parseFloat(v); return Number.isFinite(n) ? n : fb; };
+const round2       = (v) => parseFloat(toFloat(v).toFixed(2));
 const calculateTDS = (amount) => amount >= 50000 ? Math.round(amount * 0.10) : 0;
-
 const calculateGSTSplit = (netAmount, cgstRate = 9, sgstRate = 9) => {
   const cgst = round2(netAmount * cgstRate / 100);
   const sgst = round2(netAmount * sgstRate / 100);
   return { cgst, sgst, total: round2(cgst + sgst) };
 };
 
-// ─── Month helpers ─────────────────────────────────────────────────────────────
+// ─── Month helpers ────────────────────────────────────────────────────────────
 const getRentMonth = (initiationDate) => {
   const d = new Date(initiationDate.getFullYear(), initiationDate.getMonth() - 1, 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -71,7 +66,7 @@ const toMonthLabel = (monthKey) => {
   catch { return monthKey; }
 };
 
-// ─── Effective start date ──────────────────────────────────────────────────────
+// ─── Effective start date ─────────────────────────────────────────────────────
 const getEffectiveStartDate = (cust) => {
   if ((cust.payment_mode || 'full') === 'partial') {
     const parsed = parseFinancialPartials(cust.partial_payments);
@@ -84,14 +79,14 @@ const getEffectiveStartDate = (cust) => {
         .sort((a, b) => a - b);
       if (dates.length > 0) {
         const d = dates[0];
-        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
       }
     }
   }
   return cust.payment_closure_date || null;
 };
 
-// ─── Rent calculation helpers ──────────────────────────────────────────────────
+// ─── Rent calculation helpers ─────────────────────────────────────────────────
 const calcRentForMonth = (monthlyRent, closureDate, rentMonth) => {
   if (!monthlyRent) return { rent: 0, rentType: 'unknown' };
   if (!closureDate) return { rent: round2(monthlyRent), rentType: 'full_month', closureMonthKey: null, daysInClosureMonth: null, daysFromClosure: null, closureDay: null, monthlyRent: round2(monthlyRent), proratedRent: round2(monthlyRent) };
@@ -151,7 +146,7 @@ const buildScheduledDate = (monthStr, dueDay) => {
   return `${monthStr}-${String(Math.min(Number(dueDay) || 1, max)).padStart(2, '0')}`;
 };
 
-// ─── Partial payments parsing ──────────────────────────────────────────────────
+// ─── Partial payments parsing ─────────────────────────────────────────────────
 const parseFinancialPartials = (raw) => {
   if (!raw) return null;
   try {
@@ -176,7 +171,7 @@ const filterActiveEntries = (allEntries, rentMonth) =>
     return mk !== null && mk <= rentMonth;
   });
 
-// ─── Core gross computation ────────────────────────────────────────────────────
+// ─── Core gross computation ───────────────────────────────────────────────────
 const computeGrossForCustomer = (customer, closureDate, rentMonth) => {
   const rentPerSft  = toFloat(customer.rental_value_per_sft);
   const sqft        = toFloat(customer.sqft);
@@ -237,74 +232,34 @@ const computeGstForPayment = (netPayout, cust) => {
   return { has_gst: true, gst_no: gstNo, cgst_rate: cgstRate, sgst_rate: sgstRate, cgst_amount: cgstAmount, sgst_amount: sgstAmount, total_gst_amount: totalGstAmount, net_transfer: round2(netPayout + totalGstAmount) };
 };
 
-// ─── NEW: Payout split computation ────────────────────────────────────────────
-/**
- * Given the net payout for a payment and the customer's payout_splits array,
- * returns an array of per-account disbursement objects with exact rupee amounts.
- *
- * The last entry absorbs rounding so the total always equals netPayout.
- *
- * @param {number}   netPayout   - the amount to distribute (after TDS, before GST)
- * @param {object[]} splits      - array of { bankAccountNumber, ifscCode, bankName,
- *                                            accountHolderName, percentage }
- * @returns {object[]}
- */
 const splitPayoutForPayment = (netPayout, splits) => {
   if (!Array.isArray(splits) || splits.length === 0) return [];
-  if (splits.length === 1) {
-    return [{
-      ...splits[0],
-      amount:     round2(netPayout),
-      percentage: splits[0].percentage,
-    }];
-  }
-
+  if (splits.length === 1) return [{ ...splits[0], amount: round2(netPayout), percentage: splits[0].percentage }];
   let remaining = round2(netPayout);
   return splits.map((sp, i) => {
     const isLast = i === splits.length - 1;
-    const amount = isLast
-      ? round2(remaining)
-      : round2(netPayout * sp.percentage / 100);
+    const amount = isLast ? round2(remaining) : round2(netPayout * sp.percentage / 100);
     remaining = round2(remaining - amount);
     return { ...sp, amount };
   });
 };
 
-/**
- * Parse payout_splits stored as JSONB (may be string or already an object).
- */
 const parsePayoutSplits = (raw) => {
   if (!raw) return null;
   if (Array.isArray(raw)) return raw;
-  if (typeof raw === 'string') {
-    try { return JSON.parse(raw); } catch { return null; }
-  }
+  if (typeof raw === 'string') { try { return JSON.parse(raw); } catch { return null; } }
   return null;
 };
 
-// ─── enrichPayment — attaches customer fields + GST + split breakdown ─────────
 const enrichPayment = (p, cust) => {
-  const netPayout   = toFloat(p.net_payout);
-  const gst         = computeGstForPayment(netPayout, cust);
-  const splits      = parsePayoutSplits(cust.payout_splits);
-  const payoutBreakdown = splits && splits.length > 0
-    ? splitPayoutForPayment(netPayout, splits)
-    : null;
-
-  return {
-    ...p,
-    customer_name:    cust.customer_name,
-    customer_code:    cust.customer_id,
-    unit_no:          cust.unit_no,
-    floor_no:         cust.floor_no,
-    property_name:    cust.property_name,
-    payout_splits:    splits,
-    payout_breakdown: payoutBreakdown,   // per-account amounts for this payment
-    ...gst,
-  };
+  const netPayout       = toFloat(p.net_payout);
+  const gst             = computeGstForPayment(netPayout, cust);
+  const splits          = parsePayoutSplits(cust.payout_splits);
+  const payoutBreakdown = splits && splits.length > 0 ? splitPayoutForPayment(netPayout, splits) : null;
+  return { ...p, customer_name: cust.customer_name, customer_code: cust.customer_id, unit_no: cust.unit_no, floor_no: cust.floor_no, property_name: cust.property_name, payout_splits: splits, payout_breakdown: payoutBreakdown, ...gst };
 };
 
-// ─── FR JOIN helper ────────────────────────────────────────────────────────────
+// ─── FR JOIN helper (used by generateMonthlyPayments / createPaymentSchedule) ─
 const FR_JOIN = `
   FROM customers c
   LEFT JOIN (
@@ -317,59 +272,150 @@ const FR_JOIN = `
   ) fr ON c.id = fr.customer_id
 `;
 
-// ─── INSERT helper (used by both generateMonthlyPayments and createPaymentSchedule) ──
+// ─── INSERT helper ────────────────────────────────────────────────────────────
 const insertPayment = async (client, params) => {
   const {
     customerId, paymentDate, rentMonth, grossAmount, tdsAmount, netPayout,
     period, baseRent, escalationRate, yearsElapsed, scheduledDate,
     userId, installmentNo, totalInstallments, installmentPct,
-    payoutSplitsJson,
+    payoutSplitsJson, customerUnitId,
   } = params;
-
   const { rows: [p] } = await client.query(
     `INSERT INTO payments (
        customer_id, payment_date, payment_month, gross_amount, tds_amount,
        net_payout, payment_period, base_rent, escalation_rate, years_elapsed,
        scheduled_date, status, created_by,
        installment_no, total_installments, installment_percentage,
-       payout_splits
+       payout_splits, customer_unit_id
      )
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'Pending',$12,$13,$14,$15,$16::jsonb)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'Pending',$12,$13,$14,$15,$16::jsonb,$17)
      RETURNING *`,
     [
       customerId, paymentDate, rentMonth, grossAmount, tdsAmount,
       netPayout, period, baseRent, escalationRate, yearsElapsed,
       scheduledDate, userId,
-      installmentNo        || null,
-      totalInstallments    || null,
-      installmentPct       || null,
-      payoutSplitsJson     || null,
+      installmentNo     || null,
+      totalInstallments || null,
+      installmentPct    || null,
+      payoutSplitsJson  || null,
+      customerUnitId    || null,
     ]
   );
   return p;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  calculatePayment  (unchanged in logic; payout split added to response)
+//  calculatePayment
+//
+//  KEY FIX (LATERAL JOIN):
+//  The old query used:
+//    LEFT JOIN financial_records fr ON fr.customer_unit_id = cu.id
+//  If financial_records.customer_unit_id was never backfilled (NULL) for a
+//  record, the JOIN returns no rows → payment_closure_date is NULL → full month.
+//
+//  The new LATERAL join:
+//    1. Prefers records where customer_unit_id = cu.id  (exact unit match)
+//    2. Falls back to records where customer_unit_id IS NULL AND customer_id = c.id
+//    3. Always picks the most recent record
+//  This works whether or not the migration backfill ran for this specific record.
 // ═══════════════════════════════════════════════════════════════════════════════
 const calculatePayment = async (req, res) => {
   try {
-    const { customerId, paymentDate } = req.body;
-    if (!customerId || !paymentDate)
-      return res.status(400).json({ success: false, error: 'customerId and paymentDate are required' });
+    const { customerId, customerUnitId, paymentDate } = req.body;
 
-    const { rows } = await query(
-      `SELECT c.*, fr.rent AS financial_rent, fr.tds_applicable, fr.rental_value_per_sft,
-         fr.total_sale_consideration, fr.payment_closure_date, fr.payment_mode, fr.partial_payments
-       ${FR_JOIN}
-       WHERE c.id = $1 AND c.deleted_at IS NULL AND c.status = 'Active'`,
-      [customerId]
-    );
-    if (!rows.length) return res.status(404).json({ success: false, error: 'Customer not found or inactive' });
-    const cust = rows[0];
+    if (!paymentDate)
+      return res.status(400).json({ success: false, error: 'paymentDate is required' });
+    if (!customerId && !customerUnitId)
+      return res.status(400).json({ success: false, error: 'customerId or customerUnitId is required' });
+
+    let cust;
+
+    if (customerUnitId) {
+      // ── Unit-based lookup with ROBUST LATERAL JOIN ────────────────────────
+      // Uses LATERAL so it finds the financial record whether or not
+      // customer_unit_id was backfilled in the migration.
+      const { rows } = await query(
+        `SELECT
+           c.id                                                  AS id,
+           c.customer_id,
+           c.customer_name,
+           c.email,
+           c.phone,
+           c.gst_no,
+           c.cgst,
+           c.sgst,
+           cu.sqft,
+           cu.floor_no,
+           cu.unit_no,
+           cu.agreement_type,
+           cu.actual_occupancy_date,
+           COALESCE(cu.payout_splits, c.payout_splits)          AS payout_splits,
+           cu.status,
+           COALESCE(fr.tds_applicable, cu.tds_applicable, 'N')  AS tds_applicable,
+           fr.rent                                              AS financial_rent,
+           fr.rental_value_per_sft,
+           fr.total_sale_consideration,
+           fr.payment_closure_date,
+           fr.payment_mode,
+           fr.partial_payments
+         FROM customer_units cu
+         JOIN customers c ON cu.customer_id = c.id
+         -- ── LATERAL JOIN: prefers unit-specific record, falls back to customer_id ──
+         LEFT JOIN LATERAL (
+           SELECT
+             rent,
+             tds_applicable,
+             rental_value_per_sft,
+             total_sale_consideration,
+             payment_closure_date,
+             payment_mode,
+             partial_payments
+           FROM financial_records
+           WHERE deleted_at IS NULL
+             AND (
+               customer_unit_id = cu.id
+               OR (customer_unit_id IS NULL AND customer_id = c.id)
+             )
+           ORDER BY
+             (customer_unit_id = cu.id) DESC,   -- prefer unit-specific row
+             created_at DESC                     -- then most recent
+           LIMIT 1
+         ) fr ON TRUE
+         WHERE cu.id = $1
+           AND cu.deleted_at IS NULL
+           AND c.deleted_at  IS NULL`,
+        [customerUnitId]
+      );
+
+      if (!rows.length)
+        return res.status(404).json({ success: false, error: 'Customer unit not found' });
+
+      cust = rows[0];
+
+      if (cust.status !== 'Active')
+        return res.status(400).json({
+          success: false,
+          error: `Unit is ${cust.status} — cannot calculate payment`,
+        });
+
+    } else {
+      // ── Legacy path: lookup by customers.id ──────────────────────────────
+      const { rows } = await query(
+        `SELECT c.*,
+           fr.rent AS financial_rent, fr.tds_applicable, fr.rental_value_per_sft,
+           fr.total_sale_consideration, fr.payment_closure_date,
+           fr.payment_mode, fr.partial_payments
+         ${FR_JOIN}
+         WHERE c.id = $1 AND c.deleted_at IS NULL AND c.status = 'Active'`,
+        [customerId]
+      );
+      if (!rows.length)
+        return res.status(404).json({ success: false, error: 'Customer not found or inactive' });
+      cust = rows[0];
+    }
 
     if (!cust.rental_value_per_sft && !cust.financial_rent)
-      return res.status(400).json({ success: false, error: 'No financial record found.' });
+      return res.status(400).json({ success: false, error: 'No financial record found for this unit. Please save a financial record first.' });
     if (!['Construction', '9-Year'].includes(cust.agreement_type))
       return res.status(400).json({ success: false, error: 'Invalid agreement type.' });
     if (cust.agreement_type === '9-Year' && !cust.actual_occupancy_date)
@@ -377,7 +423,6 @@ const calculatePayment = async (req, res) => {
 
     const initDate    = new Date(paymentDate);
     const rentMonth   = getRentMonth(initDate);
-    const pmStr       = `${initDate.getFullYear()}-${String(initDate.getMonth() + 1).padStart(2, '0')}`;
     const totalSale   = toFloat(cust.total_sale_consideration);
     const sqft        = toFloat(cust.sqft);
     const rentPerSft  = toFloat(cust.rental_value_per_sft);
@@ -386,13 +431,20 @@ const calculatePayment = async (req, res) => {
     const gst         = getGstConfig(cust);
     const splits      = parsePayoutSplits(cust.payout_splits);
 
-    const { rows: existingPayments } = await query(
-      `SELECT id, status FROM payments
-       WHERE customer_id = $1 AND payment_month = $2
-         AND status IN ('Completed','Processing','Order_Created')
-         AND deleted_at IS NULL`,
-      [customerId, rentMonth]
-    );
+    // Duplicate check — scoped to unit if unit ID is known
+    const dupQuery = customerUnitId
+      ? `SELECT id, status FROM payments
+         WHERE (customer_unit_id = $1 OR (customer_id = $2 AND customer_unit_id IS NULL))
+           AND payment_month = $3
+           AND status IN ('Completed','Processing','Order_Created')
+           AND deleted_at IS NULL`
+      : `SELECT id, status FROM payments
+         WHERE customer_id = $1
+           AND payment_month = $2
+           AND status IN ('Completed','Processing','Order_Created')
+           AND deleted_at IS NULL`;
+    const dupParams = customerUnitId ? [customerUnitId, cust.id, rentMonth] : [cust.id, rentMonth];
+    const { rows: existingPayments } = await query(dupQuery, dupParams);
     if (existingPayments.length)
       return res.status(400).json({
         success: false,
@@ -405,23 +457,25 @@ const calculatePayment = async (req, res) => {
     if (startMonthKey && rentMonth < startMonthKey)
       return res.status(400).json({
         success: false,
-        error: `Payment for ${cust.customer_name} has not started yet. Rent payments begin from ${toMonthLabel(startMonthKey)}.`,
-        code: 'PAYMENT_NOT_STARTED', startMonth: startMonthKey,
-        startMonthLabel: toMonthLabel(startMonthKey),
+        error: `Payment for ${cust.customer_name} has not started yet. Rent begins from ${toMonthLabel(startMonthKey)}.`,
+        code: 'PAYMENT_NOT_STARTED',
+        startMonth: startMonthKey, startMonthLabel: toMonthLabel(startMonthKey),
         customerName: cust.customer_name, rentMonth,
       });
 
     const { rows: [pr] } = await query(
       `SELECT COALESCE(SUM(gross_amount), 0) AS total_paid FROM payments
        WHERE customer_id = $1 AND deleted_at IS NULL AND status <> 'Cancelled'`,
-      [customerId]
+      [cust.id]
     );
     const totalAlreadyPaid = toFloat(pr.total_paid);
     const remainingBalance = Math.max(0, totalSale - totalAlreadyPaid);
 
     const buildGstDetails = (netAmount) => {
-      if (!gst.hasGst) return { cgstAmount: 0, sgstAmount: 0, totalGstAmount: 0, totalInvoice: round2(netAmount), ...gst };
-      const { cgst: cgstAmount, sgst: sgstAmount, total: totalGstAmount } = calculateGSTSplit(netAmount, gst.cgstRate, gst.sgstRate);
+      if (!gst.hasGst)
+        return { cgstAmount: 0, sgstAmount: 0, totalGstAmount: 0, totalInvoice: round2(netAmount), ...gst };
+      const { cgst: cgstAmount, sgst: sgstAmount, total: totalGstAmount } =
+        calculateGSTSplit(netAmount, gst.cgstRate, gst.sgstRate);
       return { cgstAmount, sgstAmount, totalGstAmount, totalInvoice: round2(netAmount + totalGstAmount), ...gst };
     };
     const buildNetTransfer = (netPayout, gd) => round2(netPayout + gd.totalGstAmount);
@@ -429,45 +483,60 @@ const calculatePayment = async (req, res) => {
     const ok = (extra) => {
       const netPayout = extra.netPayout || 0;
       const gd = buildGstDetails(netPayout);
-      const payoutBreakdown = splits && splits.length > 0
-        ? splitPayoutForPayment(netPayout, splits)
-        : null;
+      const payoutBreakdown = splits && splits.length > 0 ? splitPayoutForPayment(netPayout, splits) : null;
       return res.json({
         success: true,
         data: {
-          customerId: cust.id, customerName: cust.customer_name,
-          unitNo: cust.unit_no, floorNo: cust.floor_no,
-          agreementType: cust.agreement_type, tdsApplicable: cust.tds_applicable,
-          tdsExempt, tdsAutoMode: !tdsExempt,
+          dbCustomerId:  cust.id,
+          customerId:    cust.customer_id,
+          customerName:  cust.customer_name,
+          unitNo:        cust.unit_no,
+          floorNo:       cust.floor_no,
+          agreementType: cust.agreement_type,
+          tdsApplicable: cust.tds_applicable,
+          tdsExempt,
+          tdsAutoMode:   !tdsExempt,
           actualOccupancyDate: cust.actual_occupancy_date,
-          paymentClosureDate: cust.payment_closure_date || null,
+          paymentClosureDate:  cust.payment_closure_date || null,
           paymentDate, rentMonth, paymentMonth: rentMonth,
           installmentBreakdown: null,
-          payoutSplits: splits,
-          payoutBreakdown,          // ← per-account breakdown
-          ...extra, ...gd, netBankTransfer: buildNetTransfer(netPayout, gd),
+          payoutSplits: splits, payoutBreakdown,
+          ...extra, ...gd,
+          netBankTransfer: buildNetTransfer(netPayout, gd),
         },
       });
     };
 
-    // ── Full payment path ──────────────────────────────────────────────────
+    // ── Full payment path ─────────────────────────────────────────────────────
     const closureDate = cust.payment_closure_date ? new Date(cust.payment_closure_date) : null;
-    const { grossAmount, escalationRate, yearsElapsed, rentDetails, monthlyRent } = computeGrossForCustomer(cust, closureDate, rentMonth);
+    const { grossAmount, escalationRate, yearsElapsed, rentDetails, monthlyRent } =
+      computeGrossForCustomer(cust, closureDate, rentMonth);
+
     const tdsAmount = tdsExempt ? 0 : calculateTDS(grossAmount);
     const netPayout = round2(grossAmount - tdsAmount);
-    const gd = buildGstDetails(netPayout);
+    const gd        = buildGstDetails(netPayout);
+
     return ok({
-      paymentMode: 'full', grossAmount: round2(grossAmount), tdsAmount,
-      tdsApplied: tdsAmount > 0, tdsThreshold: 50000, netPayout, baseRent: round2(grossAmount),
-      tdsRate: tdsAmount > 0 ? 10 : 0, escalationRate, yearsElapsed: round2(yearsElapsed),
+      paymentMode:    'full',
+      grossAmount:    round2(grossAmount),
+      tdsAmount,
+      tdsApplied:     tdsAmount > 0,
+      tdsThreshold:   50000,
+      netPayout,
+      baseRent:       round2(grossAmount),
+      tdsRate:        tdsAmount > 0 ? 10 : 0,
+      escalationRate,
+      yearsElapsed:   round2(yearsElapsed),
       rentCalculationDetails: {
         totalSaleConsideration: totalSale, totalAlreadyPaid, remainingBalance,
-        sqft, rentalValuePerSft: rentPerSft, monthlyRent, ...rentDetails,
+        sqft, rentalValuePerSft: rentPerSft, monthlyRent,
+        ...rentDetails,
         note: rentDetails.rentType === 'prorated_closure_month'
           ? `Prorated rent ${rentDetails.daysFromClosure}/${rentDetails.daysInClosureMonth} days`
           : `Full rent for ${rentMonth}`,
       },
-      ...gd, netBankTransfer: buildNetTransfer(netPayout, gd),
+      ...gd,
+      netBankTransfer: buildNetTransfer(netPayout, gd),
     });
 
   } catch (err) {
@@ -477,16 +546,14 @@ const calculatePayment = async (req, res) => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  generateMonthlyPayments  — now stores payout_splits on each payment
+//  generateMonthlyPayments
 // ═══════════════════════════════════════════════════════════════════════════════
 const generateMonthlyPayments = async (req, res) => {
   try {
     const { month, agreementType } = req.body;
     const userId = req.user.id;
-
     if (!month) return res.status(400).json({ success: false, error: 'month required (YYYY-MM)' });
     if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ success: false, error: 'Invalid month format. Use YYYY-MM' });
-
     const [yr, mo] = month.split('-').map(Number);
     const rmDate    = new Date(yr, mo - 2, 1);
     const rentMonth = `${rmDate.getFullYear()}-${String(rmDate.getMonth() + 1).padStart(2, '0')}`;
@@ -522,230 +589,46 @@ const generateMonthlyPayments = async (req, res) => {
           `SELECT id FROM payments WHERE customer_id = $1 AND payment_month = $2 AND status <> 'Cancelled' AND deleted_at IS NULL`,
           [cust.id, rentMonth]
         );
-        if (dup.length) {
-          duplicates.push({ customerId: cust.id, customerName: cust.customer_name, reason: `Payment already exists for ${toMonthLabel(rentMonth)}` });
-          continue;
-        }
+        if (dup.length) { duplicates.push({ customerId: cust.id, customerName: cust.customer_name, reason: `Payment already exists for ${toMonthLabel(rentMonth)}` }); continue; }
 
         const period  = cust.agreement_type;
         const payMode = cust.payment_mode || 'full';
 
         if (payMode === 'partial') {
           const parsed = parseFinancialPartials(cust.partial_payments);
-
           if (parsed?.type === 'financial') {
-            const allEntries = parsed.entries;
-            const totalSaleC = toFloat(cust.total_sale_consideration);
-            const sqftC      = toFloat(cust.sqft);
-            const rpsftC     = toFloat(cust.rental_value_per_sft);
-            const entries    = filterActiveEntries(allEntries, rentMonth);
+            const allEntries = parsed.entries, totalSaleC = toFloat(cust.total_sale_consideration), sqftC = toFloat(cust.sqft), rpsftC = toFloat(cust.rental_value_per_sft);
+            const entries = filterActiveEntries(allEntries, rentMonth);
             if (!entries.length) { skip('No active partial tranches for this rent month'); continue; }
-
             let cdfg = cust.payment_closure_date ? new Date(cust.payment_closure_date) : null;
-            if (!cdfg) {
-              for (const e of allEntries) {
-                const src = getEntryClosureDate(e);
-                if (src) { cdfg = new Date(src); break; }
-              }
-            }
+            if (!cdfg) { for (const e of allEntries) { const src = getEntryClosureDate(e); if (src) { cdfg = new Date(src); break; } } }
             const { escalationRate, yearsElapsed } = computeGrossForCustomer(cust, cdfg, rentMonth);
             const entryData = entries.map((e) => {
-              const bank     = toFloat(e.bankAmount ?? e.bank_amount);
-              const tdsRcvd  = toFloat(e.tdsAmount  ?? e.tds_amount);
-              const amtRcvd  = bank + tdsRcvd;
+              const bank = toFloat(e.bankAmount ?? e.bank_amount), tdsRcvd = toFloat(e.tdsAmount ?? e.tds_amount), amtRcvd = bank + tdsRcvd;
               const closureS = getEntryClosureDate(e) ?? '';
-              const dateStr  = e.date ?? scheduled0;
               const baseRent = calcPartialBaseRent(amtRcvd, closureS, totalSaleC, sqftC, rpsftC, rentMonth);
               const entryGross = round2(baseRent + (escalationRate > 0 ? round2(baseRent * escalationRate / 100) : 0));
-              return { closureS, dateStr, baseRent, entryGross };
+              return { closureS, dateStr: e.date ?? scheduled0, baseRent, entryGross };
             });
             const combinedGross = round2(entryData.reduce((s, d) => s + d.entryGross, 0));
             const combinedTds   = tdsExemptC ? 0 : calculateTDS(combinedGross);
-
             for (let idx = 0; idx < entryData.length; idx++) {
               const { closureS, dateStr, entryGross, baseRent } = entryData[idx];
-              const rowTds = idx === 0 ? combinedTds : 0;
-              const rowNet = round2(entryGross - rowTds);
-              const p = await insertPayment(client, {
-                customerId: cust.id, paymentDate: dateStr, rentMonth,
-                grossAmount: entryGross, tdsAmount: rowTds, netPayout: rowNet,
-                period, baseRent, escalationRate, yearsElapsed,
-                scheduledDate: closureS || dateStr, userId,
-                installmentNo: idx + 1, totalInstallments: entries.length,
-                installmentPct: null, payoutSplitsJson: splitsJson,
-              });
+              const rowTds = idx === 0 ? combinedTds : 0, rowNet = round2(entryGross - rowTds);
+              const p = await insertPayment(client, { customerId: cust.id, paymentDate: dateStr, rentMonth, grossAmount: entryGross, tdsAmount: rowTds, netPayout: rowNet, period, baseRent, escalationRate, yearsElapsed, scheduledDate: closureS || dateStr, userId, installmentNo: idx + 1, totalInstallments: entries.length, installmentPct: null, payoutSplitsJson: splitsJson });
               payments.push(enrichPayment(p, cust));
             }
             continue;
           }
-
           if (parsed?.type === 'installment') {
             const refDate = cust.payment_closure_date ? new Date(cust.payment_closure_date) : new Date(scheduled0);
             const { grossAmount, escalationRate, yearsElapsed } = computeGrossForCustomer(cust, refDate, rentMonth);
-            let defs;
-            try { defs = calcPartialInstallments(cust.partial_payments); }
-            catch (e) { skip(e.message); continue; }
+            let defs; try { defs = calcPartialInstallments(cust.partial_payments); } catch (e) { skip(e.message); continue; }
             if (defs) {
               const bd = buildInstallmentBreakdown(defs, grossAmount, tdsExemptC);
               for (const inst of bd) {
                 const instDate = buildScheduledDate(month, inst.due_day);
-                const p = await insertPayment(client, {
-                  customerId: cust.id, paymentDate: instDate, rentMonth,
-                  grossAmount: inst.gross_amount, tdsAmount: inst.tds_amount, netPayout: inst.net_payout,
-                  period, baseRent: grossAmount, escalationRate, yearsElapsed,
-                  scheduledDate: instDate, userId,
-                  installmentNo: inst.installment_no, totalInstallments: bd.length,
-                  installmentPct: inst.percentage, payoutSplitsJson: splitsJson,
-                });
-                payments.push(enrichPayment(p, cust));
-              }
-              continue;
-            }
-          }
-        }
-
-        // ── Full payment ───────────────────────────────────────────────────
-        const refDate = cust.payment_closure_date ? new Date(cust.payment_closure_date) : null;
-        const { grossAmount, escalationRate, yearsElapsed } = computeGrossForCustomer(cust, refDate, rentMonth);
-        const tds = tdsExemptC ? 0 : calculateTDS(grossAmount);
-        const net = round2(grossAmount - tds);
-        const p = await insertPayment(client, {
-          customerId: cust.id, paymentDate: scheduled0, rentMonth,
-          grossAmount, tdsAmount: tds, netPayout: net,
-          period, baseRent: grossAmount, escalationRate, yearsElapsed,
-          scheduledDate: scheduled0, userId,
-          installmentNo: null, totalInstallments: null,
-          installmentPct: null, payoutSplitsJson: splitsJson,
-        });
-        payments.push(enrichPayment(p, cust));
-      }
-
-      await client.query(
-        `INSERT INTO audit_logs (user_id, action, resource_type, resource_id, changes, ip_address, user_agent, status)
-         VALUES ($1,'MONTHLY_PAYMENTS_GENERATED','PAYMENT',NULL,$2,$3,$4,'SUCCESS')`,
-        [userId, JSON.stringify({ initiationMonth: month, rentMonth, generated: payments.length, skipped: skipped.length, duplicates: duplicates.length, agreementType: agreementType || 'All' }), req.ip || '0.0.0.0', req.headers['user-agent'] || 'system']
-      );
-    });
-
-    res.status(201).json({
-      success: true,
-      message: `Generated ${payments.length} payment(s) for rent month: ${toMonthLabel(rentMonth)}`,
-      data: {
-        initiationMonth: month, rentMonth, rentMonthDisplay: toMonthLabel(rentMonth),
-        initiationMonthDisplay: toMonthLabel(month),
-        paymentsGenerated: payments.length, skippedCount: skipped.length,
-        duplicateCount: duplicates.length, payments, skipped, duplicates,
-      },
-    });
-  } catch (err) {
-    console.error('generateMonthlyPayments error:', err);
-    res.status(500).json({ success: false, error: err.message || 'Failed to generate monthly payments' });
-  }
-};
-
-// ═══════════════════════════════════════════════════════════════════════════════
-//  createPaymentSchedule  — now stores payout_splits on each payment
-// ═══════════════════════════════════════════════════════════════════════════════
-const createPaymentSchedule = async (req, res) => {
-  try {
-    const { customerIds, scheduledDate } = req.body;
-    const userId = req.user.id;
-    if (!customerIds?.length) return res.status(400).json({ success: false, error: 'No customers selected' });
-    if (!scheduledDate) return res.status(400).json({ success: false, error: 'scheduledDate required' });
-
-    const initDate  = new Date(scheduledDate);
-    const rentMonth = getRentMonth(initDate);
-    const pmStr     = `${initDate.getFullYear()}-${String(initDate.getMonth() + 1).padStart(2, '0')}`;
-    const payments  = [], skipped = [];
-
-    await transaction(async (client) => {
-      for (const customerId of customerIds) {
-        const { rows } = await client.query(
-          `SELECT c.*, fr.rent AS financial_rent, fr.tds_applicable, fr.rental_value_per_sft,
-                  fr.total_sale_consideration, fr.payment_closure_date, fr.payment_mode, fr.partial_payments
-           ${FR_JOIN} WHERE c.id = $1 AND c.deleted_at IS NULL AND c.status = 'Active'`,
-          [customerId]
-        );
-        const skip = (r) => skipped.push({ customerId, customerName: rows[0]?.customer_name, reason: r });
-        if (!rows.length) { skip('Not found or inactive'); continue; }
-        const cust = rows[0];
-        const tdsExemptC = isTdsExempt(cust);
-        const splitsJson = cust.payout_splits
-          ? (typeof cust.payout_splits === 'string' ? cust.payout_splits : JSON.stringify(cust.payout_splits))
-          : null;
-
-        if (!cust.rental_value_per_sft && !cust.financial_rent) { skip('No financial record'); continue; }
-        if (!['Construction', '9-Year'].includes(cust.agreement_type)) { skip('Invalid agreement type'); continue; }
-        if (cust.agreement_type === '9-Year' && !cust.actual_occupancy_date) { skip('Missing occupancy date'); continue; }
-
-        const startMonthKey = toMonthKey(getEffectiveStartDate(cust));
-        if (startMonthKey && rentMonth < startMonthKey) { skip(`${cust.customer_name}: payment starts ${toMonthLabel(startMonthKey)}`); continue; }
-
-        const { rows: dup } = await client.query(
-          `SELECT id FROM payments WHERE customer_id = $1 AND payment_month = $2 AND status <> 'Cancelled' AND deleted_at IS NULL`,
-          [customerId, rentMonth]
-        );
-        if (dup.length) { skip(`Payment already exists for ${toMonthLabel(rentMonth)}`); continue; }
-
-        const period = cust.agreement_type, payMode = cust.payment_mode || 'full';
-
-        if (payMode === 'partial') {
-          const parsed = parseFinancialPartials(cust.partial_payments);
-          if (parsed?.type === 'financial') {
-            const allEntries = parsed.entries;
-            const totalSaleC = toFloat(cust.total_sale_consideration);
-            const sqftC = toFloat(cust.sqft), rpsftC = toFloat(cust.rental_value_per_sft);
-            const entries = filterActiveEntries(allEntries, rentMonth);
-            if (!entries.length) { skip('No active tranches'); continue; }
-            let cdfg = cust.payment_closure_date ? new Date(cust.payment_closure_date) : null;
-            if (!cdfg) {
-              for (const e of allEntries) {
-                const src = getEntryClosureDate(e);
-                if (src) { cdfg = new Date(src); break; }
-              }
-            }
-            const { escalationRate, yearsElapsed } = computeGrossForCustomer(cust, cdfg, rentMonth);
-            const entryData = entries.map((e) => {
-              const bank = toFloat(e.bankAmount ?? e.bank_amount), tdsRcvd = toFloat(e.tdsAmount ?? e.tds_amount), amtRcvd = bank + tdsRcvd;
-              const closureS   = getEntryClosureDate(e) ?? '';
-              const baseRent   = calcPartialBaseRent(amtRcvd, closureS, totalSaleC, sqftC, rpsftC, rentMonth);
-              const entryGross = round2(baseRent + (escalationRate > 0 ? round2(baseRent * escalationRate / 100) : 0));
-              return { closureS, dateStr: e.date ?? scheduledDate, baseRent, entryGross };
-            });
-            const combinedTds = tdsExemptC ? 0 : calculateTDS(round2(entryData.reduce((s, d) => s + d.entryGross, 0)));
-            for (let idx = 0; idx < entryData.length; idx++) {
-              const { closureS, dateStr, entryGross, baseRent } = entryData[idx];
-              const rowTds = idx === 0 ? combinedTds : 0, rowNet = round2(entryGross - rowTds);
-              const p = await insertPayment(client, {
-                customerId, paymentDate: dateStr, rentMonth,
-                grossAmount: entryGross, tdsAmount: rowTds, netPayout: rowNet,
-                period, baseRent, escalationRate, yearsElapsed,
-                scheduledDate: closureS || dateStr, userId,
-                installmentNo: idx + 1, totalInstallments: entries.length,
-                installmentPct: null, payoutSplitsJson: splitsJson,
-              });
-              payments.push(enrichPayment(p, cust));
-            }
-            continue;
-          }
-          if (parsed?.type === 'installment') {
-            const refDate = cust.payment_closure_date ? new Date(cust.payment_closure_date) : initDate;
-            const { grossAmount, escalationRate, yearsElapsed } = computeGrossForCustomer(cust, refDate, rentMonth);
-            let defs;
-            try { defs = calcPartialInstallments(cust.partial_payments); }
-            catch (e) { skip(e.message); continue; }
-            if (defs) {
-              const bd = buildInstallmentBreakdown(defs, grossAmount, tdsExemptC);
-              for (const inst of bd) {
-                const instDate = buildScheduledDate(pmStr, inst.due_day);
-                const p = await insertPayment(client, {
-                  customerId, paymentDate: instDate, rentMonth,
-                  grossAmount: inst.gross_amount, tdsAmount: inst.tds_amount, netPayout: inst.net_payout,
-                  period, baseRent: grossAmount, escalationRate, yearsElapsed,
-                  scheduledDate: instDate, userId,
-                  installmentNo: inst.installment_no, totalInstallments: bd.length,
-                  installmentPct: inst.percentage, payoutSplitsJson: splitsJson,
-                });
+                const p = await insertPayment(client, { customerId: cust.id, paymentDate: instDate, rentMonth, grossAmount: inst.gross_amount, tdsAmount: inst.tds_amount, netPayout: inst.net_payout, period, baseRent: grossAmount, escalationRate, yearsElapsed, scheduledDate: instDate, userId, installmentNo: inst.installment_no, totalInstallments: bd.length, installmentPct: inst.percentage, payoutSplitsJson: splitsJson });
                 payments.push(enrichPayment(p, cust));
               }
               continue;
@@ -756,446 +639,308 @@ const createPaymentSchedule = async (req, res) => {
         const refDate = cust.payment_closure_date ? new Date(cust.payment_closure_date) : null;
         const { grossAmount, escalationRate, yearsElapsed } = computeGrossForCustomer(cust, refDate, rentMonth);
         const tds = tdsExemptC ? 0 : calculateTDS(grossAmount), net = round2(grossAmount - tds);
-        const p = await insertPayment(client, {
-          customerId, paymentDate: scheduledDate, rentMonth,
-          grossAmount, tdsAmount: tds, netPayout: net,
-          period, baseRent: grossAmount, escalationRate, yearsElapsed,
-          scheduledDate, userId,
-          installmentNo: null, totalInstallments: null,
-          installmentPct: null, payoutSplitsJson: splitsJson,
-        });
+        const p = await insertPayment(client, { customerId: cust.id, paymentDate: scheduled0, rentMonth, grossAmount, tdsAmount: tds, netPayout: net, period, baseRent: grossAmount, escalationRate, yearsElapsed, scheduledDate: scheduled0, userId, installmentNo: null, totalInstallments: null, installmentPct: null, payoutSplitsJson: splitsJson });
         payments.push(enrichPayment(p, cust));
       }
 
       await client.query(
-        `INSERT INTO audit_logs (user_id, action, resource_type, resource_id, changes, ip_address, user_agent, status)
-         VALUES ($1,'PAYMENT_SCHEDULE_CREATED','PAYMENT',NULL,$2,$3,$4,'SUCCESS')`,
-        [userId, JSON.stringify({ scheduled: payments.length, skipped: skipped.length, rentMonth, scheduledDate }),
-         req.ip || '0.0.0.0', req.headers['user-agent'] || 'system']
+        `INSERT INTO audit_logs (user_id, action, resource_type, resource_id, changes, ip_address, user_agent, status) VALUES ($1,'MONTHLY_PAYMENTS_GENERATED','PAYMENT',NULL,$2,$3,$4,'SUCCESS')`,
+        [userId, JSON.stringify({ initiationMonth: month, rentMonth, generated: payments.length, skipped: skipped.length, duplicates: duplicates.length, agreementType: agreementType || 'All' }), req.ip || '0.0.0.0', req.headers['user-agent'] || 'system']
       );
     });
 
     res.status(201).json({
       success: true,
-      message: `${payments.length} payment(s) scheduled${skipped.length ? `, ${skipped.length} skipped` : ''}`,
-      data: { payments, skipped, rentMonth },
+      message: `Generated ${payments.length} payment(s) for rent month: ${toMonthLabel(rentMonth)}`,
+      data: { initiationMonth: month, rentMonth, rentMonthDisplay: toMonthLabel(rentMonth), initiationMonthDisplay: toMonthLabel(month), paymentsGenerated: payments.length, skippedCount: skipped.length, duplicateCount: duplicates.length, payments, skipped, duplicates },
     });
+  } catch (err) {
+    console.error('generateMonthlyPayments error:', err);
+    res.status(500).json({ success: false, error: err.message || 'Failed to generate monthly payments' });
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  createPaymentSchedule
+// ═══════════════════════════════════════════════════════════════════════════════
+const createPaymentSchedule = async (req, res) => {
+  try {
+    const { customerIds, scheduledDate } = req.body;
+    const userId = req.user.id;
+    if (!customerIds?.length) return res.status(400).json({ success: false, error: 'No customers selected' });
+    if (!scheduledDate) return res.status(400).json({ success: false, error: 'scheduledDate required' });
+    const initDate  = new Date(scheduledDate);
+    const rentMonth = getRentMonth(initDate);
+    const pmStr     = `${initDate.getFullYear()}-${String(initDate.getMonth() + 1).padStart(2, '0')}`;
+    const payments  = [], skipped = [];
+
+    await transaction(async (client) => {
+      for (const customerId of customerIds) {
+        const { rows } = await client.query(
+          `SELECT c.*, fr.rent AS financial_rent, fr.tds_applicable, fr.rental_value_per_sft, fr.total_sale_consideration, fr.payment_closure_date, fr.payment_mode, fr.partial_payments ${FR_JOIN} WHERE c.id = $1 AND c.deleted_at IS NULL AND c.status = 'Active'`,
+          [customerId]
+        );
+        const skip = (r) => skipped.push({ customerId, customerName: rows[0]?.customer_name, reason: r });
+        if (!rows.length) { skip('Not found or inactive'); continue; }
+        const cust = rows[0];
+        const tdsExemptC = isTdsExempt(cust);
+        const splitsJson = cust.payout_splits ? (typeof cust.payout_splits === 'string' ? cust.payout_splits : JSON.stringify(cust.payout_splits)) : null;
+
+        if (!cust.rental_value_per_sft && !cust.financial_rent) { skip('No financial record'); continue; }
+        if (!['Construction', '9-Year'].includes(cust.agreement_type)) { skip('Invalid agreement type'); continue; }
+        if (cust.agreement_type === '9-Year' && !cust.actual_occupancy_date) { skip('Missing occupancy date'); continue; }
+
+        const startMonthKey = toMonthKey(getEffectiveStartDate(cust));
+        if (startMonthKey && rentMonth < startMonthKey) { skip(`${cust.customer_name}: payment starts ${toMonthLabel(startMonthKey)}`); continue; }
+
+        const { rows: dup } = await client.query(`SELECT id FROM payments WHERE customer_id = $1 AND payment_month = $2 AND status <> 'Cancelled' AND deleted_at IS NULL`, [customerId, rentMonth]);
+        if (dup.length) { skip(`Payment already exists for ${toMonthLabel(rentMonth)}`); continue; }
+
+        const period = cust.agreement_type, payMode = cust.payment_mode || 'full';
+
+        if (payMode === 'partial') {
+          const parsed = parseFinancialPartials(cust.partial_payments);
+          if (parsed?.type === 'financial') {
+            const allEntries = parsed.entries, totalSaleC = toFloat(cust.total_sale_consideration), sqftC = toFloat(cust.sqft), rpsftC = toFloat(cust.rental_value_per_sft);
+            const entries = filterActiveEntries(allEntries, rentMonth);
+            if (!entries.length) { skip('No active tranches'); continue; }
+            let cdfg = cust.payment_closure_date ? new Date(cust.payment_closure_date) : null;
+            if (!cdfg) { for (const e of allEntries) { const src = getEntryClosureDate(e); if (src) { cdfg = new Date(src); break; } } }
+            const { escalationRate, yearsElapsed } = computeGrossForCustomer(cust, cdfg, rentMonth);
+            const entryData = entries.map((e) => {
+              const bank = toFloat(e.bankAmount ?? e.bank_amount), tdsRcvd = toFloat(e.tdsAmount ?? e.tds_amount), amtRcvd = bank + tdsRcvd;
+              const closureS = getEntryClosureDate(e) ?? '';
+              const baseRent = calcPartialBaseRent(amtRcvd, closureS, totalSaleC, sqftC, rpsftC, rentMonth);
+              const entryGross = round2(baseRent + (escalationRate > 0 ? round2(baseRent * escalationRate / 100) : 0));
+              return { closureS, dateStr: e.date ?? scheduledDate, baseRent, entryGross };
+            });
+            const combinedTds = tdsExemptC ? 0 : calculateTDS(round2(entryData.reduce((s, d) => s + d.entryGross, 0)));
+            for (let idx = 0; idx < entryData.length; idx++) {
+              const { closureS, dateStr, entryGross, baseRent } = entryData[idx];
+              const rowTds = idx === 0 ? combinedTds : 0, rowNet = round2(entryGross - rowTds);
+              const p = await insertPayment(client, { customerId, paymentDate: dateStr, rentMonth, grossAmount: entryGross, tdsAmount: rowTds, netPayout: rowNet, period, baseRent, escalationRate, yearsElapsed, scheduledDate: closureS || dateStr, userId, installmentNo: idx + 1, totalInstallments: entries.length, installmentPct: null, payoutSplitsJson: splitsJson });
+              payments.push(enrichPayment(p, cust));
+            }
+            continue;
+          }
+          if (parsed?.type === 'installment') {
+            const refDate = cust.payment_closure_date ? new Date(cust.payment_closure_date) : initDate;
+            const { grossAmount, escalationRate, yearsElapsed } = computeGrossForCustomer(cust, refDate, rentMonth);
+            let defs; try { defs = calcPartialInstallments(cust.partial_payments); } catch (e) { skip(e.message); continue; }
+            if (defs) {
+              const bd = buildInstallmentBreakdown(defs, grossAmount, tdsExemptC);
+              for (const inst of bd) {
+                const instDate = buildScheduledDate(pmStr, inst.due_day);
+                const p = await insertPayment(client, { customerId, paymentDate: instDate, rentMonth, grossAmount: inst.gross_amount, tdsAmount: inst.tds_amount, netPayout: inst.net_payout, period, baseRent: grossAmount, escalationRate, yearsElapsed, scheduledDate: instDate, userId, installmentNo: inst.installment_no, totalInstallments: bd.length, installmentPct: inst.percentage, payoutSplitsJson: splitsJson });
+                payments.push(enrichPayment(p, cust));
+              }
+              continue;
+            }
+          }
+        }
+
+        const refDate = cust.payment_closure_date ? new Date(cust.payment_closure_date) : null;
+        const { grossAmount, escalationRate, yearsElapsed } = computeGrossForCustomer(cust, refDate, rentMonth);
+        const tds = tdsExemptC ? 0 : calculateTDS(grossAmount), net = round2(grossAmount - tds);
+        const p = await insertPayment(client, { customerId, paymentDate: scheduledDate, rentMonth, grossAmount, tdsAmount: tds, netPayout: net, period, baseRent: grossAmount, escalationRate, yearsElapsed, scheduledDate, userId, installmentNo: null, totalInstallments: null, installmentPct: null, payoutSplitsJson: splitsJson });
+        payments.push(enrichPayment(p, cust));
+      }
+
+      await client.query(
+        `INSERT INTO audit_logs (user_id, action, resource_type, resource_id, changes, ip_address, user_agent, status) VALUES ($1,'PAYMENT_SCHEDULE_CREATED','PAYMENT',NULL,$2,$3,$4,'SUCCESS')`,
+        [userId, JSON.stringify({ scheduled: payments.length, skipped: skipped.length, rentMonth, scheduledDate }), req.ip || '0.0.0.0', req.headers['user-agent'] || 'system']
+      );
+    });
+
+    res.status(201).json({ success: true, message: `${payments.length} payment(s) scheduled${skipped.length ? `, ${skipped.length} skipped` : ''}`, data: { payments, skipped, rentMonth } });
   } catch (err) {
     console.error('createPaymentSchedule error:', err);
     res.status(500).json({ success: false, error: 'Failed to create payment schedule' });
   }
 };
 
-// ─── Remaining controllers (unchanged logic) ───────────────────────────────────
-
+// ─── Remaining controllers ────────────────────────────────────────────────────
 const getPaymentSchedule = async (req, res) => {
   try {
     const { month, status, agreementType } = req.query;
     const params = []; let pi = 1;
-    let sql = `
-      SELECT p.*, c.customer_name, c.customer_id AS customer_code,
-             c.unit_no, c.floor_no, c.property_name, c.email, c.phone,
-             c.pan_number, c.agreement_type, c.gst_no, c.cgst, c.sgst,
-             c.bank_account_number, c.bank_name, c.ifsc_code,
-             c.payout_splits AS customer_payout_splits,
-             fr.rent AS financial_rent, fr.tds_applicable, fr.rental_value_per_sft,
-             fr.total_sale_consideration, fr.payment_closure_date, fr.payment_mode
-      FROM payments p
-      JOIN customers c ON p.customer_id = c.id
-      LEFT JOIN (
-        SELECT DISTINCT ON (customer_id) customer_id, rent, tds_applicable,
-               rental_value_per_sft, total_sale_consideration, payment_closure_date, payment_mode
-        FROM financial_records WHERE deleted_at IS NULL ORDER BY customer_id, created_at DESC
-      ) fr ON c.id = fr.customer_id
-      WHERE p.deleted_at IS NULL
-    `;
+    let sql = `SELECT p.*, c.customer_name, c.customer_id AS customer_code, c.unit_no, c.floor_no, c.property_name, c.email, c.phone, c.pan_number, c.agreement_type, c.gst_no, c.cgst, c.sgst, c.bank_account_number, c.bank_name, c.ifsc_code, c.payout_splits AS customer_payout_splits, fr.rent AS financial_rent, fr.tds_applicable, fr.rental_value_per_sft, fr.total_sale_consideration, fr.payment_closure_date, fr.payment_mode FROM payments p JOIN customers c ON p.customer_id = c.id LEFT JOIN (SELECT DISTINCT ON (customer_id) customer_id, rent, tds_applicable, rental_value_per_sft, total_sale_consideration, payment_closure_date, payment_mode FROM financial_records WHERE deleted_at IS NULL ORDER BY customer_id, created_at DESC) fr ON c.id = fr.customer_id WHERE p.deleted_at IS NULL`;
     if (month)         { sql += ` AND p.payment_month = $${pi}`;  params.push(month);         pi++; }
     if (status)        { sql += ` AND p.status = $${pi}`;         params.push(status);        pi++; }
     if (agreementType) { sql += ` AND c.agreement_type = $${pi}`; params.push(agreementType); pi++; }
     sql += ` ORDER BY c.customer_name ASC, p.installment_no ASC NULLS LAST, p.created_at DESC`;
     const { rows } = await query(sql, params);
     res.json({ success: true, data: rows });
-  } catch (err) {
-    console.error('getPaymentSchedule error:', err);
-    res.status(500).json({ success: false, error: 'Failed to fetch payment schedule' });
-  }
+  } catch (err) { console.error('getPaymentSchedule error:', err); res.status(500).json({ success: false, error: 'Failed to fetch payment schedule' }); }
 };
 
 const getPaymentById = async (req, res) => {
   try {
     const { id } = req.params;
     const { rows } = await query(
-      `SELECT p.*, c.customer_name, c.customer_id AS customer_code, c.unit_no, c.floor_no,
-              c.property_name, c.email, c.phone, c.pan_number, c.agreement_type,
-              c.bank_account_number, c.bank_name, c.ifsc_code, c.gst_no, c.cgst, c.sgst,
-              c.payout_splits AS customer_payout_splits,
-              fr.rent AS financial_rent, fr.tds_applicable, fr.rental_value_per_sft,
-              fr.total_sale_consideration, fr.payment_closure_date, fr.payment_mode
-       FROM payments p
-       JOIN customers c ON p.customer_id = c.id
-       LEFT JOIN (
-         SELECT DISTINCT ON (customer_id) customer_id, rent, tds_applicable,
-                rental_value_per_sft, total_sale_consideration, payment_closure_date, payment_mode
-         FROM financial_records WHERE deleted_at IS NULL ORDER BY customer_id, created_at DESC
-       ) fr ON c.id = fr.customer_id
-       WHERE p.id = $1 AND p.deleted_at IS NULL`,
+      `SELECT p.*, c.customer_name, c.customer_id AS customer_code, c.unit_no, c.floor_no, c.property_name, c.email, c.phone, c.pan_number, c.agreement_type, c.bank_account_number, c.bank_name, c.ifsc_code, c.gst_no, c.cgst, c.sgst, c.payout_splits AS customer_payout_splits, fr.rent AS financial_rent, fr.tds_applicable, fr.rental_value_per_sft, fr.total_sale_consideration, fr.payment_closure_date, fr.payment_mode FROM payments p JOIN customers c ON p.customer_id = c.id LEFT JOIN (SELECT DISTINCT ON (customer_id) customer_id, rent, tds_applicable, rental_value_per_sft, total_sale_consideration, payment_closure_date, payment_mode FROM financial_records WHERE deleted_at IS NULL ORDER BY customer_id, created_at DESC) fr ON c.id = fr.customer_id WHERE p.id = $1 AND p.deleted_at IS NULL`,
       [id]
     );
     if (!rows.length) return res.status(404).json({ success: false, error: 'Payment not found' });
     res.json({ success: true, data: rows[0] });
-  } catch (err) {
-    console.error('getPaymentById error:', err);
-    res.status(500).json({ success: false, error: 'Failed to fetch payment' });
-  }
+  } catch (err) { console.error('getPaymentById error:', err); res.status(500).json({ success: false, error: 'Failed to fetch payment' }); }
 };
 
 const resetOrderCreated = async (req, res) => {
   try {
     const { paymentIds } = req.body;
     if (!paymentIds?.length) return res.status(400).json({ success: false, error: 'paymentIds required' });
-    await query(
-      `UPDATE payments SET status = 'Pending', razorpay_order_id = NULL, order_created_at = NULL
-       WHERE id = ANY($1) AND status = 'Order_Created' AND deleted_at IS NULL`,
-      [paymentIds]
-    );
+    await query(`UPDATE payments SET status = 'Pending', razorpay_order_id = NULL, order_created_at = NULL WHERE id = ANY($1) AND status = 'Order_Created' AND deleted_at IS NULL`, [paymentIds]);
     res.json({ success: true, message: 'Payments reset to Pending' });
-  } catch (err) {
-    console.error('resetOrderCreated error:', err);
-    res.status(500).json({ success: false, error: 'Failed to reset payments' });
-  }
+  } catch (err) { console.error('resetOrderCreated error:', err); res.status(500).json({ success: false, error: 'Failed to reset payments' }); }
 };
 
 const createEasebuzzOrder = async (req, res) => {
   try {
     const { paymentIds } = req.body;
-    if (!paymentIds?.length)
-      return res.status(400).json({ success: false, error: 'No payment IDs provided' });
-
+    if (!paymentIds?.length) return res.status(400).json({ success: false, error: 'No payment IDs provided' });
     const { rows: pmts } = await query(
-      `SELECT p.*, c.customer_name, c.customer_id AS customer_code,
-              c.unit_no, c.floor_no, c.email, c.phone,
-              c.gst_no, c.cgst, c.sgst, c.payout_splits AS customer_payout_splits
-       FROM payments p JOIN customers c ON p.customer_id = c.id
-       WHERE p.id = ANY($1) AND p.status = 'Pending' AND p.deleted_at IS NULL
-       ORDER BY c.customer_name ASC, p.installment_no ASC NULLS LAST`,
+      `SELECT p.*, c.customer_name, c.customer_id AS customer_code, c.unit_no, c.floor_no, c.email, c.phone, c.gst_no, c.cgst, c.sgst, c.payout_splits AS customer_payout_splits FROM payments p JOIN customers c ON p.customer_id = c.id WHERE p.id = ANY($1) AND p.status = 'Pending' AND p.deleted_at IS NULL ORDER BY c.customer_name ASC, p.installment_no ASC NULLS LAST`,
       [paymentIds]
     );
-    if (!pmts.length)
-      return res.status(400).json({ success: false, error: 'No valid pending payments found' });
+    if (!pmts.length) return res.status(400).json({ success: false, error: 'No valid pending payments found' });
 
     const paymentBreakdown = pmts.map((p) => {
-      const netPayout = toFloat(p.net_payout);
-      const hasGst    = !!p.gst_no;
-      const cgstRate  = hasGst ? (toFloat(p.cgst) || 9) : 0;
-      const sgstRate  = hasGst ? (toFloat(p.sgst) || 9) : 0;
-      const cgstAmt   = hasGst ? round2(netPayout * cgstRate / 100) : 0;
-      const sgstAmt   = hasGst ? round2(netPayout * sgstRate / 100) : 0;
-      const totalGst  = round2(cgstAmt + sgstAmt);
-      const chargeAmt = round2(netPayout + totalGst);
-      const splits    = parsePayoutSplits(p.payout_splits || p.customer_payout_splits);
+      const netPayout = toFloat(p.net_payout), hasGst = !!p.gst_no;
+      const cgstRate = hasGst ? (toFloat(p.cgst) || 9) : 0, sgstRate = hasGst ? (toFloat(p.sgst) || 9) : 0;
+      const cgstAmt = hasGst ? round2(netPayout * cgstRate / 100) : 0, sgstAmt = hasGst ? round2(netPayout * sgstRate / 100) : 0;
+      const totalGst = round2(cgstAmt + sgstAmt), chargeAmt = round2(netPayout + totalGst);
+      const splits = parsePayoutSplits(p.payout_splits || p.customer_payout_splits);
       return { ...p, netPayout, hasGst, cgstRate, sgstRate, cgstAmt, sgstAmt, totalGst, chargeAmt, splits };
     });
 
-    const totalNet    = round2(paymentBreakdown.reduce((s, p) => s + p.netPayout, 0));
-    const totalGstAll = round2(paymentBreakdown.reduce((s, p) => s + p.totalGst,  0));
+    const totalNet = round2(paymentBreakdown.reduce((s, p) => s + p.netPayout, 0));
+    const totalGstAll = round2(paymentBreakdown.reduce((s, p) => s + p.totalGst, 0));
     const totalCharge = round2(totalNet + totalGstAll);
     const chargeRounded = Math.round(totalCharge);
-    if (chargeRounded < 1)
-      return res.status(400).json({ success: false, error: 'Amount too low (minimum ₹1)' });
+    if (chargeRounded < 1) return res.status(400).json({ success: false, error: 'Amount too low (minimum ₹1)' });
 
     const customerMap = new Map();
     for (const p of paymentBreakdown) {
       const cid = p.customer_id;
-      if (!customerMap.has(cid)) {
-        customerMap.set(cid, {
-          customer_id: cid, customer_name: p.customer_name,
-          customer_code: p.customer_code, unit_no: p.unit_no, floor_no: p.floor_no,
-          email: p.email, phone: p.phone, gst_no: p.gst_no || null,
-          payout_splits: p.splits || null,
-          payments: [], net_payout: 0, total_gst: 0, charge_amount: 0,
-        });
-      }
+      if (!customerMap.has(cid)) customerMap.set(cid, { customer_id: cid, customer_name: p.customer_name, customer_code: p.customer_code, unit_no: p.unit_no, floor_no: p.floor_no, email: p.email, phone: p.phone, gst_no: p.gst_no || null, payout_splits: p.splits || null, payments: [], net_payout: 0, total_gst: 0, charge_amount: 0 });
       const c = customerMap.get(cid);
-      c.payments.push({
-        payment_id: p.id, installment_no: p.installment_no, total_installments: p.total_installments,
-        payment_month: p.payment_month, gross_amount: toFloat(p.gross_amount),
-        tds_amount: toFloat(p.tds_amount), net_payout: p.netPayout,
-        has_gst: p.hasGst, cgst_rate: p.cgstRate, sgst_rate: p.sgstRate,
-        cgst_amount: p.cgstAmt, sgst_amount: p.sgstAmt, total_gst: p.totalGst,
-        charge_amount: p.chargeAmt,
-        // Per-account disbursement for this payment
-        payout_breakdown: p.splits ? splitPayoutForPayment(p.netPayout, p.splits) : null,
-      });
+      c.payments.push({ payment_id: p.id, installment_no: p.installment_no, total_installments: p.total_installments, payment_month: p.payment_month, gross_amount: toFloat(p.gross_amount), tds_amount: toFloat(p.tds_amount), net_payout: p.netPayout, has_gst: p.hasGst, cgst_rate: p.cgstRate, sgst_rate: p.sgstRate, cgst_amount: p.cgstAmt, sgst_amount: p.sgstAmt, total_gst: p.totalGst, charge_amount: p.chargeAmt, payout_breakdown: p.splits ? splitPayoutForPayment(p.netPayout, p.splits) : null });
       c.net_payout    = round2(c.net_payout    + p.netPayout);
       c.total_gst     = round2(c.total_gst     + p.totalGst);
       c.charge_amount = round2(c.charge_amount + p.chargeAmt);
     }
-    const customers      = Array.from(customerMap.values());
-    const customerCount  = customers.length;
-    const isMultiCustomer = customerCount > 1;
+    const customers = Array.from(customerMap.values()), customerCount = customers.length, isMultiCustomer = customerCount > 1;
 
-    const txnid       = generateTxnId();
-    const amount      = chargeRounded.toFixed(2);
+    const txnid = generateTxnId(), amount = chargeRounded.toFixed(2);
     const rentMonths  = [...new Set(pmts.map((p) => p.payment_month))].sort();
-    const monthLabel  = rentMonths.length === 1
-      ? rentMonths[0]
-      : `${rentMonths[0]}_to_${rentMonths[rentMonths.length - 1]}`;
-    const productinfo = isMultiCustomer
-      ? `RentBatch_${customerCount}Cust_${monthLabel}`
-      : `Rent_${customers[0].customer_code}_${monthLabel}`;
-    const firstname = isMultiCustomer
-      ? (process.env.EASEBUZZ_ADMIN_NAME  || 'RentAdmin')
-      : (customers[0].customer_name?.split(' ')[0] || 'Customer');
-    const email = isMultiCustomer
-      ? (process.env.EASEBUZZ_ADMIN_EMAIL || `rentadmin+${txnid}@yourdomain.com`)
-      : (customers[0].email || `noreply+${txnid}@yourdomain.com`);
-    const phone = isMultiCustomer
-      ? (process.env.EASEBUZZ_ADMIN_PHONE || '9999999999')
-      : (customers[0].phone || '9999999999');
+    const monthLabel  = rentMonths.length === 1 ? rentMonths[0] : `${rentMonths[0]}_to_${rentMonths[rentMonths.length-1]}`;
+    const productinfo = isMultiCustomer ? `RentBatch_${customerCount}Cust_${monthLabel}` : `Rent_${customers[0].customer_code}_${monthLabel}`;
+    const firstname   = isMultiCustomer ? (process.env.EASEBUZZ_ADMIN_NAME || 'RentAdmin') : (customers[0].customer_name?.split(' ')[0] || 'Customer');
+    const email       = isMultiCustomer ? (process.env.EASEBUZZ_ADMIN_EMAIL || `rentadmin+${txnid}@yourdomain.com`) : (customers[0].email || `noreply+${txnid}@yourdomain.com`);
+    const phone       = isMultiCustomer ? (process.env.EASEBUZZ_ADMIN_PHONE || '9999999999') : (customers[0].phone || '9999999999');
     const udf1 = paymentIds.join(','), udf2 = String(customerCount);
 
-    const ebPayload = new URLSearchParams({
-      key: EASEBUZZ_KEY, txnid, amount, productinfo, firstname, email, phone, udf1, udf2,
-      hash: generateInitiateHash({ txnid, amount, productinfo, firstname, email, udf1, udf2 }),
-      surl: process.env.EASEBUZZ_SUCCESS_URL || `${process.env.APP_URL}/payments/easebuzz/success`,
-      furl: process.env.EASEBUZZ_FAILURE_URL || `${process.env.APP_URL}/payments/easebuzz/failure`,
-    });
+    const ebPayload = new URLSearchParams({ key: EASEBUZZ_KEY, txnid, amount, productinfo, firstname, email, phone, udf1, udf2, hash: generateInitiateHash({ txnid, amount, productinfo, firstname, email, udf1, udf2 }), surl: process.env.EASEBUZZ_SUCCESS_URL || `${process.env.APP_URL}/payments/easebuzz/success`, furl: process.env.EASEBUZZ_FAILURE_URL || `${process.env.APP_URL}/payments/easebuzz/failure` });
 
     let ebRes;
-    if (IS_DEV) {
-      ebRes = mockInitiateLink({ txnid, amount, productinfo, firstname, email, udf1 });
-    } else {
-      try {
-        ebRes = await axios.post(EASEBUZZ_INITIATE_URL, ebPayload.toString(), {
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000,
-        });
-      } catch (axiosErr) {
-        console.error('Easebuzz initiateLink error:', axiosErr.message);
-        return res.status(502).json({ success: false, error: 'Could not connect to Easebuzz. Try again.' });
-      }
+    if (IS_DEV) { ebRes = mockInitiateLink({ txnid, amount, productinfo, firstname, email, udf1 }); }
+    else {
+      try { ebRes = await axios.post(EASEBUZZ_INITIATE_URL, ebPayload.toString(), { headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 15000 }); }
+      catch (axiosErr) { console.error('Easebuzz initiateLink error:', axiosErr.message); return res.status(502).json({ success: false, error: 'Could not connect to Easebuzz. Try again.' }); }
     }
-
-    if (ebRes.data?.status !== 1)
-      return res.status(400).json({ success: false, error: ebRes.data?.error_desc || 'Easebuzz initiation failed' });
+    if (ebRes.data?.status !== 1) return res.status(400).json({ success: false, error: ebRes.data?.error_desc || 'Easebuzz initiation failed' });
 
     const accessKey = ebRes.data.data;
-    await query(
-      `UPDATE payments SET status = 'Order_Created', razorpay_order_id = $1, order_created_at = NOW()
-       WHERE id = ANY($2) AND deleted_at IS NULL`,
-      [txnid, paymentIds]
-    );
+    await query(`UPDATE payments SET status = 'Order_Created', razorpay_order_id = $1, order_created_at = NOW() WHERE id = ANY($2) AND deleted_at IS NULL`, [txnid, paymentIds]);
 
-    const responseData = {
-      accessKey, txnid,
-      amount: chargeRounded, amountDisplay: chargeRounded,
-      totalNetPayout: totalNet, totalGstAmount: totalGstAll, totalCharge: chargeRounded,
-      hasGst: totalGstAll > 0, env: EASEBUZZ_ENV, key: EASEBUZZ_KEY,
-      paymentCount: pmts.length, customerCount, isMultiCustomer, rentMonths,
-      customers,
-    };
-
-    if (IS_DEV) {
-      responseData._dev = {
-        note: 'DEV MODE',
-        result: DEV_RESULT,
-        devResponse: buildMockEasebuzzResponse({ txnid, amount, productinfo, firstname, email, udf1, udf2 }),
-      };
-    }
-
+    const responseData = { accessKey, txnid, amount: chargeRounded, amountDisplay: chargeRounded, totalNetPayout: totalNet, totalGstAmount: totalGstAll, totalCharge: chargeRounded, hasGst: totalGstAll > 0, env: EASEBUZZ_ENV, key: EASEBUZZ_KEY, paymentCount: pmts.length, customerCount, isMultiCustomer, rentMonths, customers };
+    if (IS_DEV) responseData._dev = { note: 'DEV MODE', result: DEV_RESULT, devResponse: buildMockEasebuzzResponse({ txnid, amount, productinfo, firstname, email, udf1, udf2 }) };
     res.json({ success: true, data: responseData });
-  } catch (err) {
-    console.error('createEasebuzzOrder error:', err);
-    res.status(500).json({ success: false, error: err.message || 'Failed to create Easebuzz order' });
-  }
+  } catch (err) { console.error('createEasebuzzOrder error:', err); res.status(500).json({ success: false, error: err.message || 'Failed to create Easebuzz order' }); }
 };
 
 const verifyEasebuzzPayment = async (req, res) => {
   try {
     const { paymentIds, easebuzzResponse } = req.body;
     const userId = req.user.id;
-    if (!paymentIds?.length || !easebuzzResponse)
-      return res.status(400).json({ success: false, error: 'paymentIds and easebuzzResponse are required' });
-
-    const {
-      txnid, amount, productinfo, firstname, email,
-      udf1 = '', udf2 = '', udf3 = '', udf4 = '', udf5 = '',
-      status: ebStatus, easepayid, hash: receivedHash, payment_mode, phone,
-    } = easebuzzResponse;
-
+    if (!paymentIds?.length || !easebuzzResponse) return res.status(400).json({ success: false, error: 'paymentIds and easebuzzResponse are required' });
+    const { txnid, amount, productinfo, firstname, email, udf1='', udf2='', udf3='', udf4='', udf5='', status: ebStatus, easepayid, hash: receivedHash, payment_mode, phone } = easebuzzResponse;
     const expectedHash = generateResponseHash({ status: ebStatus, txnid, amount, productinfo, firstname, email, udf1, udf2, udf3, udf4, udf5 });
-    if (expectedHash !== receivedHash)
-      return res.status(400).json({ success: false, error: 'Invalid payment signature — hash mismatch' });
-    if (ebStatus !== 'success')
-      return res.status(400).json({ success: false, error: `Payment not successful — status: ${ebStatus}` });
-
+    if (expectedHash !== receivedHash) return res.status(400).json({ success: false, error: 'Invalid payment signature — hash mismatch' });
+    if (ebStatus !== 'success') return res.status(400).json({ success: false, error: `Payment not successful — status: ${ebStatus}` });
     let batch;
     await transaction(async (client) => {
-      const { rows: pmts } = await client.query(
-        `SELECT p.*, c.customer_name, c.customer_id AS customer_code, c.gst_no, c.cgst, c.sgst
-         FROM payments p JOIN customers c ON p.customer_id = c.id
-         WHERE p.id = ANY($1) AND p.status IN ('Pending','Order_Created') AND p.deleted_at IS NULL`,
-        [paymentIds]
-      );
+      const { rows: pmts } = await client.query(`SELECT p.*, c.customer_name, c.customer_id AS customer_code, c.gst_no, c.cgst, c.sgst FROM payments p JOIN customers c ON p.customer_id = c.id WHERE p.id = ANY($1) AND p.status IN ('Pending','Order_Created') AND p.deleted_at IS NULL`, [paymentIds]);
       if (!pmts.length) throw new Error('No valid payments found (may already be processed)');
-
-      const tGross = round2(pmts.reduce((s, p) => s + toFloat(p.gross_amount), 0));
-      const tTds   = round2(pmts.reduce((s, p) => s + toFloat(p.tds_amount),   0));
-      const tNet   = round2(pmts.reduce((s, p) => s + toFloat(p.net_payout),   0));
-      const tGstAll = round2(pmts.reduce((p_acc, p) => {
-        if (!p.gst_no) return p_acc;
-        const net = toFloat(p.net_payout), cr = toFloat(p.cgst) || 9, sr = toFloat(p.sgst) || 9;
-        return round2(p_acc + round2(net * cr / 100) + round2(net * sr / 100));
-      }, 0));
-      const tCharge      = round2(tNet + tGstAll);
-      const tChargePaise = Math.round(tCharge * 100);
+      const tGross = round2(pmts.reduce((s, p) => s + toFloat(p.gross_amount), 0)), tTds = round2(pmts.reduce((s, p) => s + toFloat(p.tds_amount), 0)), tNet = round2(pmts.reduce((s, p) => s + toFloat(p.net_payout), 0));
+      const tGstAll = round2(pmts.reduce((p_acc, p) => { if (!p.gst_no) return p_acc; const net = toFloat(p.net_payout), cr = toFloat(p.cgst) || 9, sr = toFloat(p.sgst) || 9; return round2(p_acc + round2(net * cr / 100) + round2(net * sr / 100)); }, 0));
+      const tCharge = round2(tNet + tGstAll), tChargePaise = Math.round(tCharge * 100);
       const uniqueCustomers = [...new Map(pmts.map((p) => [p.customer_id, { id: p.customer_id, name: p.customer_name, code: p.customer_code }])).values()];
-
-      const { rows: [b] } = await client.query(
-        `INSERT INTO payment_batches
-           (batch_date, total_payments, total_gross_amount, total_tds_amount, total_net_payout,
-            status, created_by, submitted_by, submitted_date,
-            razorpay_order_id, razorpay_payment_id, razorpay_amount, completed_by, completed_at)
-         VALUES ($1,$2,$3,$4,$5,'Completed',$6,$7,NOW(),$8,$9,$10,$11,NOW()) RETURNING *`,
-        [new Date(), pmts.length, tGross, tTds, tNet, userId, userId, txnid, easepayid, tChargePaise, userId]
-      );
+      const { rows: [b] } = await client.query(`INSERT INTO payment_batches (batch_date, total_payments, total_gross_amount, total_tds_amount, total_net_payout, status, created_by, submitted_by, submitted_date, razorpay_order_id, razorpay_payment_id, razorpay_amount, completed_by, completed_at) VALUES ($1,$2,$3,$4,$5,'Completed',$6,$7,NOW(),$8,$9,$10,$11,NOW()) RETURNING *`, [new Date(), pmts.length, tGross, tTds, tNet, userId, userId, txnid, easepayid, tChargePaise, userId]);
       batch = b;
-
       for (let i = 0; i < pmts.length; i++) {
-        const p = pmts[i];
-        const pNet = toFloat(p.net_payout), pHasGst = !!p.gst_no;
-        const pCgstRate = pHasGst ? (toFloat(p.cgst) || 9) : 0;
-        const pSgstRate = pHasGst ? (toFloat(p.sgst) || 9) : 0;
+        const p = pmts[i], pNet = toFloat(p.net_payout), pHasGst = !!p.gst_no;
+        const pCgstRate = pHasGst ? (toFloat(p.cgst) || 9) : 0, pSgstRate = pHasGst ? (toFloat(p.sgst) || 9) : 0;
         const pGst = pHasGst ? round2(round2(pNet * pCgstRate / 100) + round2(pNet * pSgstRate / 100)) : 0;
         const pChargePaise = Math.round((pNet + pGst) * 100);
-
         await client.query(`INSERT INTO payment_batch_items (batch_id, payment_id, sequence_number) VALUES ($1,$2,$3)`, [b.id, p.id, i + 1]);
-        await client.query(
-          `UPDATE payments SET
-             status = 'Completed', razorpay_order_id = $1, razorpay_payment_id = $2,
-             razorpay_signature = $3, razorpay_method = $4, payment_method = $4,
-             razorpay_email = $5, razorpay_contact = $6, razorpay_currency = 'INR',
-             razorpay_amount_paid = $7, transaction_reference = $2, bank_reference = $1,
-             processed_by = $8, processed_date = NOW(), completed_by = $8, completed_date = NOW()
-           WHERE id = $9`,
-          [txnid, easepayid, receivedHash, payment_mode || null, email || null, phone || null, pChargePaise, userId, p.id]
-        );
+        await client.query(`UPDATE payments SET status = 'Completed', razorpay_order_id = $1, razorpay_payment_id = $2, razorpay_signature = $3, razorpay_method = $4, payment_method = $4, razorpay_email = $5, razorpay_contact = $6, razorpay_currency = 'INR', razorpay_amount_paid = $7, transaction_reference = $2, bank_reference = $1, processed_by = $8, processed_date = NOW(), completed_by = $8, completed_date = NOW() WHERE id = $9`, [txnid, easepayid, receivedHash, payment_mode || null, email || null, phone || null, pChargePaise, userId, p.id]);
       }
-
-      await client.query(
-        `INSERT INTO audit_logs (user_id, action, resource_type, resource_id, changes, ip_address, user_agent, status)
-         VALUES ($1,'EASEBUZZ_PAYMENT_VERIFIED','PAYMENT_BATCH',$2,$3,$4,$5,'SUCCESS')`,
-        [userId, b.id, JSON.stringify({ total_payments: pmts.length, customer_count: uniqueCustomers.length, customers: uniqueCustomers, easepayid, txnid, payment_mode, total_gross: tGross, total_tds: tTds, total_net: tNet, total_gst: tGstAll, total_charged: tCharge, dev: IS_DEV }), req.ip || '0.0.0.0', req.headers['user-agent'] || 'system']
-      );
+      await client.query(`INSERT INTO audit_logs (user_id, action, resource_type, resource_id, changes, ip_address, user_agent, status) VALUES ($1,'EASEBUZZ_PAYMENT_VERIFIED','PAYMENT_BATCH',$2,$3,$4,$5,'SUCCESS')`, [userId, b.id, JSON.stringify({ total_payments: pmts.length, customer_count: uniqueCustomers.length, customers: uniqueCustomers, easepayid, txnid, payment_mode, total_gross: tGross, total_tds: tTds, total_net: tNet, total_gst: tGstAll, total_charged: tCharge, dev: IS_DEV }), req.ip || '0.0.0.0', req.headers['user-agent'] || 'system']);
     });
-
-    res.json({
-      success: true,
-      message: `${batch.total_payments} payment(s) for ${udf2 || '?'} customer(s) completed via Easebuzz${IS_DEV ? ' [DEV]' : ''}`,
-      data: batch,
-    });
-  } catch (err) {
-    console.error('verifyEasebuzzPayment error:', err);
-    res.status(500).json({ success: false, error: err.message || 'Payment verification failed' });
-  }
+    res.json({ success: true, message: `${batch.total_payments} payment(s) for ${udf2 || '?'} customer(s) completed via Easebuzz${IS_DEV ? ' [DEV]' : ''}`, data: batch });
+  } catch (err) { console.error('verifyEasebuzzPayment error:', err); res.status(500).json({ success: false, error: err.message || 'Payment verification failed' }); }
 };
 
 const handleEasebuzzFailure = async (req, res) => {
   try {
     const { paymentIds, txnid, easebuzzResponse } = req.body;
     if (!paymentIds?.length) return res.status(400).json({ success: false, error: 'paymentIds required' });
-    const errorMsg  = easebuzzResponse?.error   || easebuzzResponse?.status || 'unknown';
-    const errorCode = easebuzzResponse?.error_Message || null;
-    await query(
-      `UPDATE payments SET status = 'Pending', razorpay_order_id = NULL, failure_reason = $1, failure_code = $2
-       WHERE id = ANY($3) AND status IN ('Pending','Order_Created') AND deleted_at IS NULL`,
-      [errorMsg, errorCode, paymentIds]
-    );
-    await query(
-      `INSERT INTO audit_logs (user_id, action, resource_type, resource_id, changes, ip_address, user_agent, status)
-       VALUES ($1,'EASEBUZZ_PAYMENT_FAILED','PAYMENT',NULL,$2,$3,$4,'FAILURE')`,
-      [req.user.id, JSON.stringify({ paymentIds, txnid, easebuzzResponse }), req.ip || '0.0.0.0', req.headers['user-agent'] || 'system']
-    );
+    const errorMsg = easebuzzResponse?.error || easebuzzResponse?.status || 'unknown', errorCode = easebuzzResponse?.error_Message || null;
+    await query(`UPDATE payments SET status = 'Pending', razorpay_order_id = NULL, failure_reason = $1, failure_code = $2 WHERE id = ANY($3) AND status IN ('Pending','Order_Created') AND deleted_at IS NULL`, [errorMsg, errorCode, paymentIds]);
+    await query(`INSERT INTO audit_logs (user_id, action, resource_type, resource_id, changes, ip_address, user_agent, status) VALUES ($1,'EASEBUZZ_PAYMENT_FAILED','PAYMENT',NULL,$2,$3,$4,'FAILURE')`, [req.user.id, JSON.stringify({ paymentIds, txnid, easebuzzResponse }), req.ip || '0.0.0.0', req.headers['user-agent'] || 'system']);
     res.json({ success: true, message: 'Payment failure recorded — payments reset to Pending for retry' });
-  } catch (err) {
-    console.error('handleEasebuzzFailure error:', err);
-    res.status(500).json({ success: false, error: 'Failed to record payment failure' });
-  }
+  } catch (err) { console.error('handleEasebuzzFailure error:', err); res.status(500).json({ success: false, error: 'Failed to record payment failure' }); }
 };
 
 const completePayment = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { transactionReference, bankReference } = req.body;
-    const userId = req.user.id;
-    if (!transactionReference?.trim())
-      return res.status(400).json({ success: false, error: 'transactionReference is required' });
-    const { rows } = await query(
-      `UPDATE payments SET status='Completed', transaction_reference=$1, bank_reference=$2, completed_date=NOW(), completed_by=$3
-       WHERE id=$4 AND status='Processing' AND deleted_at IS NULL RETURNING *`,
-      [transactionReference, bankReference || null, userId, id]
-    );
+    const { id } = req.params, { transactionReference, bankReference } = req.body, userId = req.user.id;
+    if (!transactionReference?.trim()) return res.status(400).json({ success: false, error: 'transactionReference is required' });
+    const { rows } = await query(`UPDATE payments SET status='Completed', transaction_reference=$1, bank_reference=$2, completed_date=NOW(), completed_by=$3 WHERE id=$4 AND status='Processing' AND deleted_at IS NULL RETURNING *`, [transactionReference, bankReference || null, userId, id]);
     if (!rows.length) return res.status(404).json({ success: false, error: 'Payment not found or not in Processing status' });
-    await query(
-      `INSERT INTO audit_logs (user_id, action, resource_type, resource_id, changes, ip_address, user_agent, status)
-       VALUES ($1,'PAYMENT_COMPLETED','PAYMENT',$2,$3,$4,$5,'SUCCESS')`,
-      [userId, id, JSON.stringify({ transaction_reference: transactionReference, bank_reference: bankReference, amount: rows[0].net_payout }), req.ip || '0.0.0.0', req.headers['user-agent'] || 'system']
-    );
+    await query(`INSERT INTO audit_logs (user_id, action, resource_type, resource_id, changes, ip_address, user_agent, status) VALUES ($1,'PAYMENT_COMPLETED','PAYMENT',$2,$3,$4,$5,'SUCCESS')`, [userId, id, JSON.stringify({ transaction_reference: transactionReference, bank_reference: bankReference, amount: rows[0].net_payout }), req.ip || '0.0.0.0', req.headers['user-agent'] || 'system']);
     res.json({ success: true, message: 'Payment completed successfully', data: rows[0] });
-  } catch (err) {
-    console.error('completePayment error:', err);
-    res.status(500).json({ success: false, error: err.message || 'Failed to complete payment' });
-  }
+  } catch (err) { console.error('completePayment error:', err); res.status(500).json({ success: false, error: err.message || 'Failed to complete payment' }); }
 };
 
 const initiatePaymentBatch = async (req, res) => {
   try {
-    const { paymentIds } = req.body;
-    const userId = req.user.id;
+    const { paymentIds } = req.body, userId = req.user.id;
     if (!paymentIds?.length) return res.status(400).json({ success: false, error: 'No payments selected' });
     let batch;
     await transaction(async (client) => {
       const { rows: pmts } = await client.query(`SELECT * FROM payments WHERE id=ANY($1) AND status='Pending' AND deleted_at IS NULL`, [paymentIds]);
       if (!pmts.length) throw new Error('No valid pending payments found');
-      const tGross = round2(pmts.reduce((s, p) => s + toFloat(p.gross_amount), 0));
-      const tTds   = round2(pmts.reduce((s, p) => s + toFloat(p.tds_amount), 0));
-      const tNet   = round2(pmts.reduce((s, p) => s + toFloat(p.net_payout), 0));
-      const { rows: [b] } = await client.query(
-        `INSERT INTO payment_batches (batch_date, total_payments, total_gross_amount, total_tds_amount, total_net_payout, status, created_by, submitted_by, submitted_date)
-         VALUES ($1,$2,$3,$4,$5,'Submitted',$6,$7,NOW()) RETURNING *`,
-        [new Date(), pmts.length, tGross, tTds, tNet, userId, userId]
-      );
+      const tGross = round2(pmts.reduce((s, p) => s + toFloat(p.gross_amount), 0)), tTds = round2(pmts.reduce((s, p) => s + toFloat(p.tds_amount), 0)), tNet = round2(pmts.reduce((s, p) => s + toFloat(p.net_payout), 0));
+      const { rows: [b] } = await client.query(`INSERT INTO payment_batches (batch_date, total_payments, total_gross_amount, total_tds_amount, total_net_payout, status, created_by, submitted_by, submitted_date) VALUES ($1,$2,$3,$4,$5,'Submitted',$6,$7,NOW()) RETURNING *`, [new Date(), pmts.length, tGross, tTds, tNet, userId, userId]);
       batch = b;
       for (let i = 0; i < pmts.length; i++) {
         await client.query(`INSERT INTO payment_batch_items (batch_id, payment_id, sequence_number) VALUES ($1,$2,$3)`, [batch.id, pmts[i].id, i + 1]);
         await client.query(`UPDATE payments SET status='Processing', processed_by=$1, processed_date=NOW() WHERE id=$2`, [userId, pmts[i].id]);
       }
-      await client.query(
-        `INSERT INTO audit_logs (user_id, action, resource_type, resource_id, changes, ip_address, user_agent, status)
-         VALUES ($1,'PAYMENT_BATCH_INITIATED','PAYMENT_BATCH',$2,$3,$4,$5,'SUCCESS')`,
-        [userId, batch.id, JSON.stringify({ total_payments: pmts.length }), req.ip || '0.0.0.0', req.headers['user-agent'] || 'system']
-      );
+      await client.query(`INSERT INTO audit_logs (user_id, action, resource_type, resource_id, changes, ip_address, user_agent, status) VALUES ($1,'PAYMENT_BATCH_INITIATED','PAYMENT_BATCH',$2,$3,$4,$5,'SUCCESS')`, [userId, batch.id, JSON.stringify({ total_payments: pmts.length }), req.ip || '0.0.0.0', req.headers['user-agent'] || 'system']);
     });
     res.status(201).json({ success: true, message: 'Payment batch initiated', data: batch });
-  } catch (err) {
-    console.error('initiatePaymentBatch error:', err);
-    res.status(500).json({ success: false, error: err.message || 'Failed to initiate batch' });
-  }
+  } catch (err) { console.error('initiatePaymentBatch error:', err); res.status(500).json({ success: false, error: err.message || 'Failed to initiate batch' }); }
 };
 
 const getPaymentHistory = async (req, res) => {
   try {
     const { page = 1, limit = 10, customerId, status, startDate, endDate, month, agreementType } = req.query;
     const offset = (Math.max(1, parseInt(page)) - 1) * parseInt(limit);
-    let queryText = `
-      SELECT p.*, p.payout_splits AS payment_payout_splits,
-             c.customer_id AS customer_code, c.customer_name, c.pan_number, c.email,
-             c.phone, c.floor_no, c.unit_no, c.bank_account_number, c.ifsc_code, c.bank_name,
-             c.agreement_type, c.tds_applicable, c.nri_status, c.gst_no, c.cgst, c.sgst,
-             c.payout_splits AS customer_payout_splits
-      FROM payments p
-      JOIN customers c ON p.customer_id = c.id
-      WHERE p.deleted_at IS NULL
-    `;
+    let queryText = `SELECT p.*, p.payout_splits AS payment_payout_splits, c.customer_id AS customer_code, c.customer_name, c.pan_number, c.email, c.phone, c.floor_no, c.unit_no, c.bank_account_number, c.ifsc_code, c.bank_name, c.agreement_type, c.tds_applicable, c.nri_status, c.gst_no, c.cgst, c.sgst, c.payout_splits AS customer_payout_splits FROM payments p JOIN customers c ON p.customer_id = c.id WHERE p.deleted_at IS NULL`;
     const queryParams = []; let pi = 1;
     if (customerId)    { queryText += ` AND p.customer_id = $${pi}`;    queryParams.push(customerId);    pi++; }
     if (status)        { queryText += ` AND p.status = $${pi}`;         queryParams.push(status);        pi++; }
@@ -1206,7 +951,6 @@ const getPaymentHistory = async (req, res) => {
     queryText += ` ORDER BY p.payment_date DESC, p.created_at DESC LIMIT $${pi} OFFSET $${pi + 1}`;
     queryParams.push(parseInt(limit), offset);
     const result = await query(queryText, queryParams);
-
     let countQuery = `SELECT COUNT(*) FROM payments p JOIN customers c ON p.customer_id=c.id WHERE p.deleted_at IS NULL`;
     const countParams = []; let cp = 1;
     if (customerId)    { countQuery += ` AND p.customer_id=$${cp}`;    countParams.push(customerId);    cp++; }
@@ -1217,12 +961,8 @@ const getPaymentHistory = async (req, res) => {
     if (agreementType) { countQuery += ` AND c.agreement_type=$${cp}`; countParams.push(agreementType); cp++; }
     const countResult = await query(countQuery, countParams);
     const total = parseInt(countResult.rows[0].count);
-
     res.json({ success: true, data: { payments: result.rows, pagination: { page: parseInt(page), limit: parseInt(limit), total, totalPages: Math.ceil(total / parseInt(limit)) } } });
-  } catch (error) {
-    console.error('getPaymentHistory error:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch payment history' });
-  }
+  } catch (error) { console.error('getPaymentHistory error:', error); res.status(500).json({ success: false, error: 'Failed to fetch payment history' }); }
 };
 
 const getPaymentStats = async (req, res) => {
@@ -1234,205 +974,52 @@ const getPaymentStats = async (req, res) => {
     if (agreementType) { sql += ` AND c.agreement_type=$${pi}`; params.push(agreementType); pi++; }
     const { rows } = await query(sql, params);
     res.json({ success: true, data: rows[0] });
-  } catch (err) {
-    console.error('getPaymentStats error:', err);
-    res.status(500).json({ success: false, error: 'Failed to fetch statistics' });
-  }
+  } catch (err) { console.error('getPaymentStats error:', err); res.status(500).json({ success: false, error: 'Failed to fetch statistics' }); }
 };
 
 const savePaymentWithAdjustment = async (req, res) => {
   try {
     const userId = req.user.id;
-    const {
-      customerId,
-      paymentDate,
-      rentMonth,
-      grossAmount,
-      tdsAmount,
-      originalNetPayout,
-      adjustmentAmount  = 0,
-      adjustedNetPayout,
-      adjustmentNote    = null,
-      payoutSplits      = null,
-      payoutBreakdown   = null,
-    } = req.body;
- 
-    // ── Validate required fields ──────────────────────────────────────────
-    if (!customerId || !paymentDate || !rentMonth)
-      return res.status(400).json({ success: false, error: 'customerId, paymentDate, and rentMonth are required' });
-    if (adjustedNetPayout == null || adjustedNetPayout <= 0)
-      return res.status(400).json({ success: false, error: 'adjustedNetPayout must be a positive number' });
- 
-    // ── Check for existing non-cancelled payment ──────────────────────────
-    const existingCheck = await query(
-      `SELECT id, status FROM payments
-       WHERE customer_id = $1 AND payment_month = $2
-         AND status <> 'Cancelled' AND deleted_at IS NULL`,
-      [customerId, rentMonth]
-    );
-    if (existingCheck.rows.length) {
-      return res.status(409).json({
-        success: false,
-        error:   `A payment for ${rentMonth} already exists with status "${existingCheck.rows[0].status}". Cancel it first to save a new one.`,
-        code:    'PAYMENT_ALREADY_EXISTS',
-        existingId: existingCheck.rows[0].id,
-      });
-    }
- 
-    // ── Fetch customer for agreement_type / period ────────────────────────
-    const { rows: custRows } = await query(
-      `SELECT customer_name, agreement_type FROM customers WHERE id = $1 AND deleted_at IS NULL`,
-      [customerId]
-    );
-    if (!custRows.length)
-      return res.status(404).json({ success: false, error: 'Customer not found' });
- 
-    const period         = custRows[0].agreement_type;
-    const splitsJson     = payoutSplits ? JSON.stringify(payoutSplits) : null;
-    const adj            = round2(adjustmentAmount);
-    const adjNet         = round2(adjustedNetPayout);
-    const origNet        = round2(originalNetPayout ?? (round2(grossAmount) - round2(tdsAmount)));
-    const noteWithAdj    = [
-      adjustmentNote,
-      `Adjustment: ${adj >= 0 ? '+' : ''}₹${adj} (original net ₹${origNet} → adjusted ₹${adjNet})`,
-    ].filter(Boolean).join(' | ');
- 
-    // ── INSERT ────────────────────────────────────────────────────────────
+    const { customerId, paymentDate, rentMonth, grossAmount, tdsAmount, originalNetPayout, adjustmentAmount = 0, adjustedNetPayout, adjustmentNote = null, payoutSplits = null, payoutBreakdown = null } = req.body;
+    if (!customerId || !paymentDate || !rentMonth) return res.status(400).json({ success: false, error: 'customerId, paymentDate, and rentMonth are required' });
+    if (adjustedNetPayout == null || adjustedNetPayout <= 0) return res.status(400).json({ success: false, error: 'adjustedNetPayout must be a positive number' });
+    const existingCheck = await query(`SELECT id, status FROM payments WHERE customer_id = $1 AND payment_month = $2 AND status <> 'Cancelled' AND deleted_at IS NULL`, [customerId, rentMonth]);
+    if (existingCheck.rows.length) return res.status(409).json({ success: false, error: `A payment for ${rentMonth} already exists with status "${existingCheck.rows[0].status}". Cancel it first to save a new one.`, code: 'PAYMENT_ALREADY_EXISTS', existingId: existingCheck.rows[0].id });
+    const { rows: custRows } = await query(`SELECT customer_name, agreement_type FROM customers WHERE id = $1 AND deleted_at IS NULL`, [customerId]);
+    if (!custRows.length) return res.status(404).json({ success: false, error: 'Customer not found' });
+    const period = custRows[0].agreement_type, splitsJson = payoutSplits ? JSON.stringify(payoutSplits) : null;
+    const adj = round2(adjustmentAmount), adjNet = round2(adjustedNetPayout), origNet = round2(originalNetPayout ?? (round2(grossAmount) - round2(tdsAmount)));
+    const noteWithAdj = [adjustmentNote, `Adjustment: ${adj >= 0 ? '+' : ''}₹${adj} (original net ₹${origNet} → adjusted ₹${adjNet})`].filter(Boolean).join(' | ');
     const { rows: [payment] } = await query(
-      `INSERT INTO payments (
-         customer_id, payment_date, payment_month,
-         gross_amount, tds_amount, net_payout,
-         payment_period, base_rent, escalation_rate, years_elapsed,
-         scheduled_date, status, created_by,
-         adjustment_amount, adjusted_net_payout, adjustment_note,
-         payout_splits
-       )
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,0,$9,'Pending',$10,$11,$12,$13,$14::jsonb)
-       RETURNING *`,
-      [
-        customerId,
-        paymentDate,
-        rentMonth,
-        round2(grossAmount),
-        round2(tdsAmount),
-        adjNet,                 // net_payout stores the ADJUSTED net
-        period,
-        round2(grossAmount),    // base_rent = gross for simplicity
-        paymentDate,            // scheduled_date
-        userId,
-        adj,                    // adjustment_amount
-        adjNet,                 // adjusted_net_payout (explicit column)
-        noteWithAdj,
-        splitsJson,
-      ]
+      `INSERT INTO payments (customer_id, payment_date, payment_month, gross_amount, tds_amount, net_payout, payment_period, base_rent, escalation_rate, years_elapsed, scheduled_date, status, created_by, adjustment_amount, adjusted_net_payout, adjustment_note, payout_splits) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,0,$9,'Pending',$10,$11,$12,$13,$14::jsonb) RETURNING *`,
+      [customerId, paymentDate, rentMonth, round2(grossAmount), round2(tdsAmount), adjNet, period, round2(grossAmount), paymentDate, userId, adj, adjNet, noteWithAdj, splitsJson]
     );
- 
-    // ── Audit log ─────────────────────────────────────────────────────────
-    await query(
-      `INSERT INTO audit_logs
-         (user_id, action, resource_type, resource_id, changes, ip_address, user_agent, status)
-       VALUES ($1,'PAYMENT_SAVED_WITH_ADJUSTMENT','PAYMENT',$2,$3,$4,$5,'SUCCESS')`,
-      [
-        userId,
-        payment.id,
-        JSON.stringify({
-          customerId, rentMonth, paymentDate,
-          grossAmount: round2(grossAmount),
-          tdsAmount:   round2(tdsAmount),
-          originalNet: origNet,
-          adjustmentAmount: adj,
-          adjustedNet: adjNet,
-          adjustmentNote,
-          hasSplits: !!payoutSplits,
-        }),
-        req.ip || '0.0.0.0',
-        req.headers['user-agent'] || 'system',
-      ]
-    );
- 
-    res.status(201).json({
-      success: true,
-      message: `Payment saved with adjustment of ${adj >= 0 ? '+' : ''}₹${adj}. Adjusted net = ₹${adjNet}.`,
-      data: {
-        ...payment,
-        original_net_payout: origNet,
-        adjustment_amount:   adj,
-        adjusted_net_payout: adjNet,
-        payout_breakdown:    payoutBreakdown,   // returned for UI, not stored separately
-      },
-    });
-  } catch (error) {
-    console.error('savePaymentWithAdjustment error:', error);
-    res.status(500).json({ success: false, error: 'Failed to save payment with adjustment' });
-  }
+    await query(`INSERT INTO audit_logs (user_id, action, resource_type, resource_id, changes, ip_address, user_agent, status) VALUES ($1,'PAYMENT_SAVED_WITH_ADJUSTMENT','PAYMENT',$2,$3,$4,$5,'SUCCESS')`, [userId, payment.id, JSON.stringify({ customerId, rentMonth, paymentDate, grossAmount: round2(grossAmount), tdsAmount: round2(tdsAmount), originalNet: origNet, adjustmentAmount: adj, adjustedNet: adjNet, adjustmentNote, hasSplits: !!payoutSplits }), req.ip || '0.0.0.0', req.headers['user-agent'] || 'system']);
+    res.status(201).json({ success: true, message: `Payment saved with adjustment of ${adj >= 0 ? '+' : ''}₹${adj}. Adjusted net = ₹${adjNet}.`, data: { ...payment, original_net_payout: origNet, adjustment_amount: adj, adjusted_net_payout: adjNet, payout_breakdown: payoutBreakdown } });
+  } catch (error) { console.error('savePaymentWithAdjustment error:', error); res.status(500).json({ success: false, error: 'Failed to save payment with adjustment' }); }
 };
 
-// GET /payments/by-month?customerId=X&rentMonth=YYYY-MM
 const getPaymentByMonth = async (req, res) => {
   try {
     const { customerId, rentMonth } = req.query;
-    if (!customerId || !rentMonth)
-      return res.status(400).json({ success: false, error: 'customerId and rentMonth are required' });
-
-    const { rows } = await query(
-      `SELECT 
-         p.*,
-         c.customer_name,
-         c.agreement_type
-       FROM payments p
-       JOIN customers c ON c.id = p.customer_id
-       WHERE p.customer_id = $1
-         AND p.payment_month = $2
-         AND p.deleted_at IS NULL
-       ORDER BY p.created_at DESC
-       LIMIT 1`,
-      [customerId, rentMonth]
-    );
-
-    if (!rows.length)
-      return res.status(404).json({ success: false, error: 'No payment found for this month' });
-
+    if (!customerId || !rentMonth) return res.status(400).json({ success: false, error: 'customerId and rentMonth are required' });
+    const { rows } = await query(`SELECT p.*, c.customer_name, c.agreement_type FROM payments p JOIN customers c ON c.id = p.customer_id WHERE p.customer_id = $1 AND p.payment_month = $2 AND p.deleted_at IS NULL ORDER BY p.created_at DESC LIMIT 1`, [customerId, rentMonth]);
+    if (!rows.length) return res.status(404).json({ success: false, error: 'No payment found for this month' });
     res.json({ success: true, data: rows[0] });
-  } catch (error) {
-    console.error('getPaymentByMonth error:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch payment' });
-  }
+  } catch (error) { console.error('getPaymentByMonth error:', error); res.status(500).json({ success: false, error: 'Failed to fetch payment' }); }
 };
 
-// GET /payments/saved-adjustments — list all payments that have an adjustment
 const getSavedAdjustments = async (req, res) => {
   try {
     const { customerId, month, limit = 50, offset = 0 } = req.query;
-
     const conditions = [`p.deleted_at IS NULL`, `p.adjustment_amount IS NOT NULL`, `p.adjustment_amount <> 0`];
-    const values = [];
-    let idx = 1;
-
+    const values = []; let idx = 1;
     if (customerId) { conditions.push(`p.customer_id = $${idx++}`); values.push(customerId); }
     if (month)      { conditions.push(`p.payment_month = $${idx++}`); values.push(month); }
-
     values.push(limit, offset);
-
-    const { rows } = await query(
-      `SELECT 
-         p.id, p.customer_id, p.payment_month, p.payment_date,
-         p.gross_amount, p.tds_amount, p.net_payout,
-         p.adjustment_amount, p.adjusted_net_payout, p.adjustment_note,
-         p.status, p.created_at,
-         c.customer_name
-       FROM payments p
-       JOIN customers c ON c.id = p.customer_id
-       WHERE ${conditions.join(' AND ')}
-       ORDER BY p.created_at DESC
-       LIMIT $${idx++} OFFSET $${idx}`,
-      values
-    );
-
+    const { rows } = await query(`SELECT p.id, p.customer_id, p.payment_month, p.payment_date, p.gross_amount, p.tds_amount, p.net_payout, p.adjustment_amount, p.adjusted_net_payout, p.adjustment_note, p.status, p.created_at, c.customer_name FROM payments p JOIN customers c ON c.id = p.customer_id WHERE ${conditions.join(' AND ')} ORDER BY p.created_at DESC LIMIT $${idx++} OFFSET $${idx}`, values);
     res.json({ success: true, data: rows });
-  } catch (error) {
-    console.error('getSavedAdjustments error:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch adjustments' });
-  }
+  } catch (error) { console.error('getSavedAdjustments error:', error); res.status(500).json({ success: false, error: 'Failed to fetch adjustments' }); }
 };
 
 module.exports = {
@@ -1449,10 +1036,9 @@ module.exports = {
   verifyEasebuzzPayment,
   handleEasebuzzFailure,
   resetOrderCreated,
-  // Exported for use in disbursement/reporting modules
   splitPayoutForPayment,
   parsePayoutSplits,
   savePaymentWithAdjustment,
   getPaymentByMonth,
-  getSavedAdjustments
+  getSavedAdjustments,
 };

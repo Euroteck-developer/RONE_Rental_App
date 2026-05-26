@@ -12,7 +12,7 @@ const securityHeaders = helmet({
   }
 });
 
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'https://rone-frontend-dev.azurewebsites.net')
+const allowedOrigins = (process.env.ALLOWED_ORIGINS)
   .split(',')
   .map(o => o.trim().replace(/\/$/, ''))
   .filter(Boolean); // remove empty strings

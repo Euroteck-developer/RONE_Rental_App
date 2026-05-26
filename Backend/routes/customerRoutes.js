@@ -115,6 +115,9 @@ router.post(
 // List
 router.get('/', customerController.getAllCustomers);
 
+// GET /customers/lookup/pan/:pan  — used by CustomerForm PAN auto-fill
+router.get('/lookup/pan/:pan', authenticate, customerController.lookupByPAN);
+
 // Get by ID
 router.get(
   '/:id',

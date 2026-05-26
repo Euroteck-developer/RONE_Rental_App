@@ -131,6 +131,11 @@ const customerService = {
     }
   },
 
+  lookupByPAN: async (pan) => {
+    const response = await api.get(`/customers/lookup/pan/${pan}`);
+    return response.data;
+  },
+
   getCustomerById: async (customerId) => {
     try {
       const response = await api.get(`/customers/${customerId}`);

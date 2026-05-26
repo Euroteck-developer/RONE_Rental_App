@@ -3,14 +3,7 @@ import api from '../Config/api';
 const financialService = {
 
   // ── Create or Update Financial Record ───────────────────────────────────────
-  // Payload for full payment:
-  //   { customerId, totalSaleConsideration, rentalValuePerSFT, paymentClosureDate,
-  //     paymentMode: 'full', bankCollection, tdsCollection, dateOfPayment,
-  //     rent, tdsApplicable }
-  // Payload for partial payment:
-  //   { customerId, totalSaleConsideration, rentalValuePerSFT, paymentClosureDate,
-  //     paymentMode: 'partial', partialPayments: [{ amountReceived, date, rent }],
-  //     tdsApplicable }
+
   upsertFinancialRecord: async (data) => {
     try {
       const response = await api.post('/financial', data);

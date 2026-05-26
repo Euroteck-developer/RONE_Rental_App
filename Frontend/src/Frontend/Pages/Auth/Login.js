@@ -589,7 +589,7 @@ const Login = () => {
                 <img src={rone_logo} alt="R-ONE" />
               </div>
 
-              <div className="rpm-left-footer">
+              {/* <div className="rpm-left-footer">
                 <div className="rpm-tagline">
                   Manage rents &amp;<br />
                   <em>payments with precision</em>
@@ -600,7 +600,7 @@ const Login = () => {
                   <li><span className="rpm-bullet-dot" />Instant Razorpay payment processing</li>
                   <li><span className="rpm-bullet-dot" />Real-time audit trail &amp; reports</li>
                 </ul>
-              </div>
+              </div> */}
 
             </div>
           </div>
@@ -787,10 +787,10 @@ const Login = () => {
         {/* ── Footer ── */}
         <footer className="rpm-footer">
           <span className="rpm-footer-copy">
-            &copy; 2026 <strong>R-ONE Infravision</strong>. All rights reserved.
+            &copy; 2026 <strong>R-ONE</strong>. All rights reserved.
           </span>
-          <div className="rpm-footer-sep" />
-          <span className="rpm-footer-badge green">
+          {/* <div className="rpm-footer-sep" /> */}
+          {/* <span className="rpm-footer-badge green">
             <i className="bi bi-shield-check" />
             SSL Secured
           </span>
@@ -803,7 +803,7 @@ const Login = () => {
           <span className="rpm-footer-badge">
             <i className="bi bi-envelope" style={{ color: '#8d96a8' }} />
             support@r-one.in
-          </span>
+          </span> */}
         </footer>
 
       </div>

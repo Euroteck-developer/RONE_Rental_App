@@ -32,7 +32,7 @@ const MainLayout = () => {
       '/tds/monthly': 'Monthly Summary',
       '/receipts': 'Receipts',
       '/reports': 'Reports',
-      '/settings': 'Settings'
+      // '/settings': 'Settings'
     };
     return titleMap[path] || 'Rental Management';
   };
@@ -47,7 +47,7 @@ const MainLayout = () => {
 
     {
       section: 'User Management',
-      roles: ['SUPERADMIN'], // 👈 Only SUPERADMIN can see
+      roles: ['SUPERADMIN'],
       items: [
         { path: '/users', icon: 'bi-people', label: 'All Users' },
         { path: '/users/new', icon: 'bi-person-plus', label: 'Add Users' }
@@ -86,9 +86,9 @@ const MainLayout = () => {
       ]
     },
 
-    { path: '/receipts', icon: 'bi-receipt-cutoff', label: 'Receipts' },
+    // { path: '/receipts', icon: 'bi-receipt-cutoff', label: 'Receipts' },
     { path: '/reports', icon: 'bi-file-earmark-bar-graph', label: 'Reports' },
-    { path: '/settings', icon: 'bi-gear', label: 'Settings' }
+    // { path: '/settings', icon: 'bi-gear', label: 'Settings' }
   ];
 
   return (
@@ -198,9 +198,9 @@ const MainLayout = () => {
                 <Dropdown.Item href="profile">
                   <i className="bi bi-person me-2"></i> Profile
                 </Dropdown.Item>
-                <Dropdown.Item href="/settings">
+                {/* <Dropdown.Item href="/settings">
                   <i className="bi bi-gear me-2"></i> Settings
-                </Dropdown.Item>
+                </Dropdown.Item> */}
                 <Dropdown.Divider />
                 <Dropdown.Item onClick={logout}>
                   <i className="bi bi-box-arrow-right me-2"></i> Logout
