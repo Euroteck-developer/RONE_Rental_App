@@ -541,7 +541,6 @@ const InitiatePayment = () => {
           <i className="bi bi-send initiate-payment-icon me-2" />
           Initiate Payments
         </h4>
-        <p className="initiate-payment-subtitle">Select pending payments to process via Easebuzz</p>
       </div>
 
       <SessionBanner secondsLeft={secondsLeft} onLogout={handleLogout} />
