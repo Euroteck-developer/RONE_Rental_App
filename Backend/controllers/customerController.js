@@ -786,20 +786,11 @@ const { query, transaction } = require('../config/database');
 
 // ─── Validators ────────────────────────────────────────────────────────────────
 const validatePAN   = (v) => /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/i.test((v || '').trim());
-
-// FIX: Removed mandatory '0' at position 5. RBI standard says 5th char is 0,
-//      but many cooperative/rural banks and older codes don't follow this.
-//      New rule: 4 letters + 7 alphanumeric = 11 chars total.
 const validateIFSC  = (v) => /^[A-Z]{4}[A-Z0-9]{7}$/i.test((v || '').trim());
-
 const validateEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((v || '').trim());
 const validatePhone = (v) => /^\d{7,15}$/.test((v || '').replace(/[\s\-().+]/g, ''));
 const validateGST   = (v) =>
   /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/i.test((v || '').trim());
-
-// FIX: Added explicit bank account number validation.
-//      Indian bank accounts range from 9 to 18 digits typically.
-//      Accepts 6–20 numeric digits to be safe for all bank types.
 const validateBankAccount = (v) => /^\d{6,20}$/.test((v || '').trim().replace(/\s/g, ''));
 
 const cleanPhone = (v) => (v || '').replace(/[\s\-().+]/g, '');
@@ -895,7 +886,6 @@ const createCustomer = async (req, res) => {
     const emailLo = (email     || '').trim().toLowerCase();
     const phoneCl = cleanPhone(phone);
 
-    // ── Identity validation ──────────────────────────────────────────────────
     if (!customerName?.trim())
       return res.status(400).json({ success: false, error: 'Customer name is required' });
     if (!validatePAN(panUp))
@@ -907,8 +897,6 @@ const createCustomer = async (req, res) => {
     if (gstUp && !validateGST(gstUp))
       return res.status(400).json({ success: false, error: 'Invalid GST format' });
 
-    // FIX: Use Number() + isNaN checks so that cgst/sgst of 0 are handled correctly.
-    //      Previously `cgst && sgst` short-circuited when either was 0 (falsy).
     const cgstVal = (cgst !== undefined && cgst !== null && cgst !== '') ? parseFloat(cgst) : null;
     const sgstVal = (sgst !== undefined && sgst !== null && sgst !== '') ? parseFloat(sgst) : null;
 
@@ -919,13 +907,11 @@ const createCustomer = async (req, res) => {
     if (cgstVal !== null && sgstVal !== null && cgstVal + sgstVal > 100)
       return res.status(400).json({ success: false, error: 'CGST + SGST cannot exceed 100%' });
 
-    // ── Unit validation ──────────────────────────────────────────────────────
     if (!propertyName?.trim())
       return res.status(400).json({ success: false, error: 'Property name is required' });
     if (!unitNo?.trim())
       return res.status(400).json({ success: false, error: 'Unit number is required' });
 
-    // ── Payout splits ────────────────────────────────────────────────────────
     let normSplits;
     if (Array.isArray(payoutSplits) && payoutSplits.length > 0) {
       const splitErr = validatePayoutSplits(payoutSplits);
@@ -976,9 +962,8 @@ const createCustomer = async (req, res) => {
         customerId  = ec.id;
         customerRef = ec.customer_id;
       } else {
-        // NOTE: Phone is intentionally NOT checked for uniqueness.
-        //       Multiple customers (family members, joint investors) may share
-        //       the same phone number. Only email and GST must be unique.
+        // Phone is NOT checked for uniqueness — family members / joint investors share numbers.
+        // Only email and GST must be unique.
         const dup = await client.query(
           `SELECT CASE
              WHEN COUNT(*) FILTER (WHERE email = $1) > 0 THEN 'Email'
@@ -1016,9 +1001,7 @@ const createCustomer = async (req, res) => {
            RETURNING id, customer_id`,
           [
             customerName.trim(), panUp,
-            gstUp || null,
-            cgstVal,
-            sgstVal,
+            gstUp || null, cgstVal, sgstVal,
             emailLo, phoneCl, address || null, nriStatus || 'No',
             primarySplit.bankAccountNumber,
             primarySplit.ifscCode,
@@ -1048,9 +1031,7 @@ const createCustomer = async (req, res) => {
       );
       if (dupUnit.rows.length > 0)
         throw Object.assign(
-          new Error(
-            `Customer already owns unit ${unitNo} on floor ${floorNo || 'N/A'} in ${propertyName}`
-          ),
+          new Error(`Customer already owns unit ${unitNo} on floor ${floorNo || 'N/A'} in ${propertyName}`),
           { statusCode: 409 }
         );
 
@@ -1262,8 +1243,12 @@ const getCustomerById = async (req, res) => {
 const updateCustomer = async (req, res) => {
   try {
     const { id } = req.params;
+
+    // ── FIX: email and phone were missing from destructuring and never
+    //         written to the DB on update — old values always showed after save.
     const {
-      customerName, gstNo, cgst, sgst, address, nriStatus,
+      customerName, email, phone,
+      gstNo, cgst, sgst, address, nriStatus,
       propertyName, floorNo, unitNo, sqft, dateOfBooking,
       bankAccountNumber, ifscCode, bankName,
       agreementType, investmentDate,
@@ -1273,13 +1258,20 @@ const updateCustomer = async (req, res) => {
       payoutSplits,
     } = req.body;
 
-    const userId = req.user.id;
-    const gstUp  = gstNo ? gstNo.trim().toUpperCase().replace(/\s/g, '') : undefined;
+    const userId  = req.user.id;
+    const gstUp   = gstNo  ? gstNo.trim().toUpperCase().replace(/\s/g, '') : undefined;
+    // Normalise email and phone the same way create does
+    const emailLo = email ? email.trim().toLowerCase() : undefined;
+    const phoneCl = phone ? cleanPhone(phone)          : undefined;
 
-    if (gstUp && !validateGST(gstUp))
+    // ── Validate fields that are being changed ───────────────────────────────
+    if (emailLo !== undefined && !validateEmail(emailLo))
+      return res.status(400).json({ success: false, error: 'Invalid email address' });
+    if (phoneCl !== undefined && !validatePhone(phoneCl))
+      return res.status(400).json({ success: false, error: 'Invalid phone number (7–15 digits)' });
+    if (gstUp   !== undefined && gstUp && !validateGST(gstUp))
       return res.status(400).json({ success: false, error: 'Invalid GST format' });
 
-    // FIX: Same cgst/sgst fix as createCustomer — handle 0 values correctly
     const cgstVal = (cgst !== undefined && cgst !== null && cgst !== '') ? parseFloat(cgst) : null;
     const sgstVal = (sgst !== undefined && sgst !== null && sgst !== '') ? parseFloat(sgst) : null;
 
@@ -1309,21 +1301,47 @@ const updateCustomer = async (req, res) => {
 
       const cid = cur.rows[0].customer_id;
 
-      if (customerName || gstUp !== undefined || cgstVal !== null || sgstVal !== null || address || nriStatus) {
+      // ── FIX: Check if email is being changed to one already used by
+      //         a DIFFERENT customer (preserve the uniqueness constraint).
+      if (emailLo) {
+        const emailConflict = await client.query(
+          `SELECT id FROM customers
+           WHERE email = $1 AND id != $2 AND deleted_at IS NULL LIMIT 1`,
+          [emailLo, cid]
+        );
+        if (emailConflict.rows.length)
+          throw Object.assign(
+            new Error('Email already exists for a different customer'),
+            { statusCode: 409 }
+          );
+      }
+
+      // ── FIX: Update customers row — now includes email and phone ────────────
+      const needsCustomerUpdate =
+        customerName || emailLo    || phoneCl   ||
+        gstUp !== undefined        ||
+        cgstVal !== null           || sgstVal !== null ||
+        address                    || nriStatus;
+
+      if (needsCustomerUpdate) {
         await client.query(
           `UPDATE customers SET
-             customer_name = COALESCE($1, customer_name),
-             gst_no        = COALESCE($2, gst_no),
-             cgst          = COALESCE($3::numeric, cgst),
-             sgst          = COALESCE($4::numeric, sgst),
-             address       = COALESCE($5, address),
-             nri_status    = COALESCE($6, nri_status),
-             updated_by    = $7,
+             customer_name = COALESCE($1,  customer_name),
+             email         = COALESCE($2,  email),
+             phone         = COALESCE($3,  phone),
+             gst_no        = COALESCE($4,  gst_no),
+             cgst          = COALESCE($5::numeric, cgst),
+             sgst          = COALESCE($6::numeric, sgst),
+             address       = COALESCE($7,  address),
+             nri_status    = COALESCE($8,  nri_status),
+             updated_by    = $9,
              updated_at    = NOW()
-           WHERE id = $8`,
+           WHERE id = $10`,
           [
-            customerName?.trim()  || null,
-            gstUp !== undefined   ? (gstUp || null) : null,
+            customerName?.trim() || null,
+            emailLo              || null,   // ← was missing before
+            phoneCl              || null,   // ← was missing before
+            gstUp !== undefined ? (gstUp || null) : null,
             cgstVal,
             sgstVal,
             address   || null,
@@ -1333,6 +1351,7 @@ const updateCustomer = async (req, res) => {
         );
       }
 
+      // ── Update customer_units row ────────────────────────────────────────────
       const unitRes = await client.query(
         `UPDATE customer_units SET
            property_name             = COALESCE($1,  property_name),
@@ -1387,11 +1406,38 @@ const updateCustomer = async (req, res) => {
       );
     });
 
-    return res.json({ success: true, message: 'Unit updated successfully', data: updatedUnit });
+    // ── FIX: Re-fetch the full joined row so the response always reflects
+    //         the latest data (including customer-level fields like phone/email).
+    const fresh = await query(
+      `SELECT
+         cu.*,
+         c.customer_id   AS customer_ref,
+         c.customer_name,
+         c.pan_number,
+         c.email,
+         c.phone,
+         c.nri_status,
+         c.gst_no,
+         c.cgst,
+         c.sgst,
+         c.address
+       FROM customer_units cu
+       JOIN customers c ON cu.customer_id = c.id
+       WHERE cu.id = $1 AND cu.deleted_at IS NULL`,
+      [id]
+    );
+
+    return res.json({
+      success: true,
+      message: 'Unit updated successfully',
+      data:    fresh.rows[0],
+    });
   } catch (err) {
     console.error('updateCustomer:', err);
     if (err.statusCode === 404)
       return res.status(404).json({ success: false, error: err.message });
+    if (err.statusCode === 409 || err.code === '23505')
+      return res.status(409).json({ success: false, error: err.message || 'Duplicate record' });
     return res.status(500).json({ success: false, error: err.message || 'Failed to update unit' });
   }
 };

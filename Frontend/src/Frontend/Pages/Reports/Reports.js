@@ -7,10 +7,8 @@
 // import { formatDate }  from '../../Utils/helpers';
 
 // // ─── Rounding helpers ─────────────────────────────────────────────────────────
-// // r2  → 2 decimal places (internal calculations only — preserves paise precision)
-// // r0  → whole number   (Excel display — no decimal shown to user)
 // const r2 = (v) => Math.round((parseFloat(v) || 0) * 100) / 100;
-// const r0 = (v) => Math.round(parseFloat(v) || 0);          // ← all amounts in Excel
+// const r0 = (v) => Math.round(parseFloat(v) || 0);
 
 // const getCurrentMonth = () => new Date().toISOString().slice(0, 7);
 
@@ -94,7 +92,7 @@
 //     out[col.colBank]  = s ? (s.bankName          || '') : '';
 //     out[col.colAccNo] = s ? (s.bankAccountNumber || '') : '';
 //     out[col.colIFSC]  = s ? (s.ifscCode          || '') : '';
-//     out[col.colAmt]   = s != null ? r0(s._total)         : '';   // ← whole number
+//     out[col.colAmt]   = s != null ? r0(s._total)         : '';
 //   });
 //   return out;
 // };
@@ -107,7 +105,7 @@
 //     const s = g._splitBreakdown[col.index];
 //     return s != null ? r2(sum + r2(s._total)) : sum;
 //   }, 0);
-//   return { 'Total Split (₹)': r0(total) };   // ← whole number
+//   return { 'Total Split (₹)': r0(total) };
 // };
 
 // const splitTotalsFields = (grp, colDefs) => {
@@ -134,7 +132,7 @@
 //     }, 0);
 //     return r2(acc + colSum);
 //   }, 0);
-//   return { 'Total Split (₹)': r0(grand) || '' };   // ← whole number
+//   return { 'Total Split (₹)': r0(grand) || '' };
 // };
 
 // const injectSplitWidths = (baseCols, colDefs, trailingCount = 1) => {
@@ -382,8 +380,6 @@
 //         limit:         5000,
 //       });
 //       let raw = result.data.payments || [];
-
-//       // Apply customer filter
 //       raw = applyCustomerFilter(raw, monthlyCustomer);
 
 //       if (!raw.length) {
@@ -403,7 +399,7 @@
 //         'Customer ID':     g.customer_code || '',
 //         'PAN Number':      g.pan_number    || '',
 //         'Bank Account No': g.bank_account_number || '',
-//         'Property':        g.property_name || '',
+//         'Unit No':         g.unit_no       || '',                // ← added
 //         'Agreement Type':  g.agreement_type || '',
 //         'Payment Date':    g.payment_date ? formatDate(g.payment_date) : '',
 //         'Period':          g.payment_month || '',
@@ -432,8 +428,9 @@
 
 //       rows.push({
 //         'S.No': '', 'Customer Name': 'TOTAL', 'Customer ID': '', 'PAN Number': '',
-//         'Bank Account No': '', 'Property': '', 'Agreement Type': '', 'Payment Date': '',
-//         'Period': '', 'Inst Count': grp.length, 'Base Rent (₹)': '', 'Escalation (%)': '',
+//         'Bank Account No': '', 'Unit No': '', 'Agreement Type': '',              // ← updated
+//         'Payment Date': '', 'Period': '', 'Inst Count': grp.length,
+//         'Base Rent (₹)': '', 'Escalation (%)': '',
 //         'Gross Rent (₹)': tG, 'TDS (₹)': tT, 'Net Rent (₹)': tN,
 //         ...(hasGst ? {
 //           'GST No': '', 'CGST Amt (₹)': '', 'SGST Amt (₹)': '',
@@ -446,11 +443,12 @@
 
 //       const wb = XLSX.utils.book_new();
 //       const ws = XLSX.utils.json_to_sheet(rows);
+//       // Unit No col (wch:10) replaces Property col (wch:16) — same position
 //       const baseCols = hasGst
-//         ? [{wch:5},{wch:28},{wch:12},{wch:13},{wch:20},{wch:16},{wch:16},{wch:13},{wch:12},
+//         ? [{wch:5},{wch:28},{wch:12},{wch:13},{wch:20},{wch:10},{wch:16},{wch:13},{wch:12},
 //            {wch:6},{wch:12},{wch:10},{wch:14},{wch:12},{wch:14},
 //            {wch:16},{wch:12},{wch:12},{wch:14},{wch:14},{wch:10}]
-//         : [{wch:5},{wch:28},{wch:12},{wch:13},{wch:20},{wch:16},{wch:16},{wch:13},{wch:12},
+//         : [{wch:5},{wch:28},{wch:12},{wch:13},{wch:20},{wch:10},{wch:16},{wch:13},{wch:12},
 //            {wch:6},{wch:12},{wch:10},{wch:14},{wch:12},{wch:14},{wch:10}];
 //       styleHeader(ws, injectSplitWidths(baseCols, splitCols, 1));
 //       styleTotalsRow(ws, rows.length);
@@ -506,7 +504,7 @@
 //         'Customer Name':   g.customer_name || '',
 //         'PAN Number':      g.pan_number    || '',
 //         'Bank Account No': g.bank_account_number || '',
-//         'Property':        g.property_name || '',
+//         'Unit No':         g.unit_no       || '',                // ← added
 //         'Agreement Type':  g.agreement_type || '',
 //         'Inst Count':      g._count,
 //         'Gross Rent (₹)':  r0(g._gross),
@@ -528,7 +526,8 @@
 
 //       rows.push({
 //         'S.No': '', 'Month': '', 'Customer Name': 'GRAND TOTAL', 'PAN Number': '',
-//         'Bank Account No': '', 'Property': '', 'Agreement Type': '', 'Inst Count': grp.length,
+//         'Bank Account No': '', 'Unit No': '', 'Agreement Type': '',              // ← updated
+//         'Inst Count': grp.length,
 //         'Gross Rent (₹)': tG, 'TDS (₹)': tT, 'Net Rent (₹)': tN,
 //         ...(hasGst ? { 'GST Total (₹)': tGst, 'Net Transfer (₹)': r0(r2(tN + tGst)) } : {}),
 //         ...splitTotalsFields(grp, splitCols),
@@ -538,10 +537,11 @@
 
 //       const wb = XLSX.utils.book_new();
 //       const ws = XLSX.utils.json_to_sheet(rows);
+//       // Unit No col (wch:10) replaces Property col (wch:16) — same position
 //       const baseCols = hasGst
-//         ? [{wch:5},{wch:12},{wch:28},{wch:13},{wch:20},{wch:16},{wch:16},{wch:6},
+//         ? [{wch:5},{wch:12},{wch:28},{wch:13},{wch:20},{wch:10},{wch:16},{wch:6},
 //            {wch:14},{wch:12},{wch:14},{wch:14},{wch:14},{wch:10}]
-//         : [{wch:5},{wch:12},{wch:28},{wch:13},{wch:20},{wch:16},{wch:16},{wch:6},
+//         : [{wch:5},{wch:12},{wch:28},{wch:13},{wch:20},{wch:10},{wch:16},{wch:6},
 //            {wch:14},{wch:12},{wch:14},{wch:10}];
 //       styleHeader(ws, injectSplitWidths(baseCols, splitCols, 1));
 //       styleTotalsRow(ws, rows.length, 'DCFCE7');
@@ -612,7 +612,7 @@
 //         'Customer Name':   g.customer_name || '',
 //         'PAN Number':      g.pan_number    || '',
 //         'Bank Account No': g.bank_account_number || '',
-//         'Property':        g.property_name || '',
+//         'Unit No':         g.unit_no       || '',                // ← added
 //         'NRI':             (g.nri_status || '').toLowerCase() === 'yes' ? 'Yes' : 'No',
 //         'Inst Count':      g._count,
 //         'Gross Rent (₹)':  r0(g._gross),
@@ -637,7 +637,8 @@
 
 //       dRows.push({
 //         'S.No': '', 'Payment Month': '', 'Customer Name': 'TOTAL', 'PAN Number': '',
-//         'Bank Account No': '', 'Property': '', 'NRI': '', 'Inst Count': eligible.length,
+//         'Bank Account No': '', 'Unit No': '', 'NRI': '',                         // ← updated
+//         'Inst Count': eligible.length,
 //         'Gross Rent (₹)': tG, 'TDS Rate (%)': '', 'TDS Amount (₹)': tT, 'Net Rent (₹)': tN,
 //         ...(hasGst ? {
 //           'GST No': '', 'CGST Amt (₹)': '', 'SGST Amt (₹)': '',
@@ -649,10 +650,11 @@
 
 //       const wb  = XLSX.utils.book_new();
 //       const wsD = XLSX.utils.json_to_sheet(dRows);
+//       // Unit No col (wch:10) replaces Property col (wch:16) — same position
 //       const detailBase = hasGst
-//         ? [{wch:5},{wch:14},{wch:28},{wch:13},{wch:20},{wch:16},{wch:5},{wch:6},
+//         ? [{wch:5},{wch:14},{wch:28},{wch:13},{wch:20},{wch:10},{wch:5},{wch:6},
 //            {wch:14},{wch:10},{wch:14},{wch:14},{wch:16},{wch:12},{wch:12},{wch:14},{wch:14}]
-//         : [{wch:5},{wch:14},{wch:28},{wch:13},{wch:20},{wch:16},{wch:5},{wch:6},
+//         : [{wch:5},{wch:14},{wch:28},{wch:13},{wch:20},{wch:10},{wch:5},{wch:6},
 //            {wch:14},{wch:10},{wch:14},{wch:14}];
 //       appendSplitWidths(detailBase, splitCols);
 //       styleHeader(wsD, detailBase);
@@ -666,7 +668,8 @@
 //         if (!custMap[k]) {
 //           custMap[k] = {
 //             name: g.customer_name, pan: g.pan_number,
-//             bank: g.bank_account_number, property: g.property_name,
+//             bank: g.bank_account_number,
+//             unitNo: g.unit_no,                                   // ← added, property removed
 //             gstNo: g.gst_no,
 //             gross: 0, tds: 0, net: 0, cgst: 0, sgst: 0, gst: 0, months: 0,
 //             splitBreakdown: g._splitBreakdown
@@ -701,7 +704,7 @@
 //         'Customer Name':    c.name,
 //         'PAN Number':       c.pan  || '',
 //         'Bank Account No':  c.bank || '',
-//         'Property':         c.property,
+//         'Unit No':          c.unitNo || '',                      // ← added, property removed
 //         'Months':           c.months,
 //         'Total Gross (₹)':  r0(c.gross),
 //         'Total TDS (₹)':    r0(c.tds),
@@ -717,10 +720,11 @@
 //         ...splitSumField({ _splitBreakdown: c.splitBreakdown }, custSplitCols),
 //       }));
 
+//       // Unit No col (wch:10) replaces Property col (wch:16) — same position
 //       const custBase = hasGst
-//         ? [{wch:5},{wch:28},{wch:13},{wch:20},{wch:16},{wch:8},
+//         ? [{wch:5},{wch:28},{wch:13},{wch:20},{wch:10},{wch:8},
 //            {wch:14},{wch:14},{wch:14},{wch:16},{wch:12},{wch:12},{wch:14},{wch:14}]
-//         : [{wch:5},{wch:28},{wch:13},{wch:20},{wch:16},{wch:8},{wch:14},{wch:14},{wch:14}];
+//         : [{wch:5},{wch:28},{wch:13},{wch:20},{wch:10},{wch:8},{wch:14},{wch:14},{wch:14}];
 //       appendSplitWidths(custBase, custSplitCols);
 //       const wsC = XLSX.utils.json_to_sheet(cRows);
 //       styleHeader(wsC, custBase);
@@ -734,23 +738,18 @@
 //   };
 
 //   // ── CUSTOMER STATEMENT ────────────────────────────────────────────────────
-//   // Works even if no payment was generated — shows customer info with empty
-//   // payment data rather than an error.
 //   const generateCustomerStatement = async () => {
 //     if (!stmtCustomer) { toast.warning('Please select a customer'); return; }
 //     setLoad('customer', true);
 //     try {
 //       const cust = stmtCustomer.customer;
 
-//       // Fetch by customers.id (legacy customerId used in payment history)
-//       // Try both customer_id (display ref) and id (UUID) for maximum compatibility
 //       const result = await paymentService.getPaymentHistory({
 //         customerId: cust.customer_id || cust.id,
 //         limit: 1000,
 //       });
 //       let raw = result.data.payments || [];
 
-//       // Extra safety filter — match by name if IDs don't perfectly align
 //       if (!raw.length && cust.customer_name) {
 //         const allResult = await paymentService.getPaymentHistory({ limit: 5000 });
 //         raw = (allResult.data.payments || []).filter((p) =>
@@ -770,6 +769,7 @@
 //           'Payment Month':   g.payment_month || '',
 //           'Payment Date':    g.payment_date ? formatDate(g.payment_date) : '',
 //           'Period / Type':   g.payment_period || g.agreement_type || '',
+//           'Unit No':         g.unit_no        || '',             // ← added, property removed
 //           'Inst Count':      g._count,
 //           'Base Rent (₹)':   r0(g.base_rent),
 //           'Escalation (%)':  parseFloat(g.escalation_rate) || 0,
@@ -794,6 +794,7 @@
 
 //         rows.push({
 //           'S.No': '', 'Payment Month': '', 'Payment Date': '', 'Period / Type': 'TOTAL',
+//           'Unit No': '',                                         // ← updated
 //           'Inst Count': grp.length, 'Base Rent (₹)': '', 'Escalation (%)': '',
 //           'Gross Rent (₹)': tG, 'TDS (₹)': tT, 'Net Rent (₹)': tN,
 //           ...(hasGst ? {
@@ -806,16 +807,16 @@
 //         });
 
 //         const ws = XLSX.utils.json_to_sheet(rows);
+//         // Unit No col (wch:10) replaces Property col — same position after Period/Type
 //         const baseCols = hasGst
-//           ? [{wch:5},{wch:14},{wch:14},{wch:26},{wch:6},{wch:14},{wch:12},
+//           ? [{wch:5},{wch:14},{wch:14},{wch:26},{wch:10},{wch:6},{wch:14},{wch:12},
 //              {wch:14},{wch:12},{wch:14},{wch:12},{wch:12},{wch:14},{wch:14},{wch:10}]
-//           : [{wch:5},{wch:14},{wch:14},{wch:26},{wch:6},{wch:14},{wch:12},
+//           : [{wch:5},{wch:14},{wch:14},{wch:26},{wch:10},{wch:6},{wch:14},{wch:12},
 //              {wch:14},{wch:12},{wch:14},{wch:10}];
 //         styleHeader(ws, injectSplitWidths(baseCols, splitCols, 1));
 //         styleTotalsRow(ws, rows.length, 'E0F2FE');
 //         XLSX.utils.book_append_sheet(wb, ws, 'Statement');
 //       } else {
-//         // No payments found — add an empty sheet with a note
 //         const wsEmpty = XLSX.utils.aoa_to_sheet([
 //           ['No payment records found for this customer'],
 //           ['Customer:', cust.customer_name],
@@ -826,13 +827,13 @@
 //         toast.info(`No payments found for "${cust.customer_name}". Downloading customer info only.`);
 //       }
 
-//       // Customer Info sheet — always included regardless of payment existence
+//       // Customer Info sheet — always included
 //       const infoWs = XLSX.utils.aoa_to_sheet([
 //         ['Customer Payment Statement'], [''],
 //         ['Customer Name',   cust.customer_name  || ''],
 //         ['Customer ID',     cust.customer_ref || cust.customer_id || ''],
 //         ['PAN Number',      cust.pan_number     || ''],
-//         ['Property',        cust.property_name  || ''],
+//         ['Unit No',         cust.unit_no        || ''],          // ← added, property removed
 //         ['Floor / Unit',    `F${cust.floor_no || '?'} · U${cust.unit_no || '?'}`],
 //         ['Agreement',       cust.agreement_type || ''],
 //         ['Status',          cust.status         || ''],
@@ -1042,6 +1043,7 @@
 //             <div className="d-flex gap-2 flex-wrap">
 //               {[
 //                 'Gross Rent (₹)', 'TDS (₹)', 'Net Rent (₹)', 'GST (if applicable)', 'Net Transfer (₹)',
+//                 'Unit No',
 //                 'Split 1 – Name / Bank / A/C / IFSC / ₹',
 //                 'Split 2 … N (auto-added)',
 //                 'Total Split (₹)  ← "-" if no splits',
@@ -1284,6 +1286,30 @@ const groupPayments = (payments, { tdsOnly = false } = {}) => {
   return Object.values(map);
 };
 
+// ─── TDS mode transformation ──────────────────────────────────────────────────
+// When tdsMode === 'exclude':
+//   • _tds  → 0  (no TDS deducted)
+//   • _net  → _gross  (full gross is the payout)
+//   • split amounts recalculated on gross
+//   • TDS column omitted from Excel
+const applyTdsMode = (grp, tdsMode) => {
+  if (tdsMode === 'include') return grp;
+  return grp.map((g) => {
+    const rawSplits = parseSplits(
+      g.payout_splits ?? g.payment_payout_splits ?? g.customer_payout_splits
+    );
+    const newBreakdown = rawSplits
+      ? splitPayout(g._gross, rawSplits)?.map((b) => ({ ...b, _total: b.amount }))
+      : g._splitBreakdown;
+    return {
+      ...g,
+      _tds:            0,
+      _net:            g._gross,   // net = gross when TDS is excluded
+      _splitBreakdown: newBreakdown,
+    };
+  });
+};
+
 // ─── Excel styling helpers ────────────────────────────────────────────────────
 const styleHeader = (ws, cols) => {
   const range = XLSX.utils.decode_range(ws['!ref']);
@@ -1331,6 +1357,55 @@ const selectStyles = {
   }),
 };
 
+// ─── TDS Mode Dropdown ────────────────────────────────────────────────────────
+// Reusable pill-style toggle used in every report card.
+const TdsModeDropdown = ({ value, onChange, accentColor }) => (
+  <div className="mb-2">
+    <label className="form-label small fw-semibold mb-1 d-flex align-items-center gap-1">
+      <i className="bi bi-toggles" style={{ color: accentColor }} />
+      TDS in Report
+    </label>
+    <div className="d-flex gap-0" style={{ border: `1.5px solid ${accentColor}33`, borderRadius: 8, overflow: 'hidden', width: 'fit-content' }}>
+      {[
+        { v: 'include', icon: 'bi-check-circle-fill',   label: 'Including TDS' },
+        { v: 'exclude', icon: 'bi-dash-circle-fill',    label: 'Excluding TDS' },
+      ].map(({ v, icon, label }) => {
+        const active = value === v;
+        return (
+          <button
+            key={v}
+            type="button"
+            onClick={() => onChange(v)}
+            style={{
+              padding:    '5px 14px',
+              fontSize:   '0.78rem',
+              fontWeight: active ? 700 : 400,
+              background: active ? accentColor : '#fff',
+              color:      active ? '#fff' : accentColor,
+              border:     'none',
+              cursor:     'pointer',
+              transition: 'all 0.15s',
+              display:    'flex',
+              alignItems: 'center',
+              gap:        5,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <i className={`bi ${icon}`} style={{ fontSize: '0.8rem' }} />
+            {label}
+          </button>
+        );
+      })}
+    </div>
+    {value === 'exclude' && (
+      <div className="mt-1" style={{ fontSize: '0.72rem', color: '#6B7280' }}>
+        <i className="bi bi-info-circle me-1" />
+        TDS column hidden · Net = Gross in the downloaded file
+      </div>
+    )}
+  </div>
+);
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  MAIN COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1354,6 +1429,12 @@ const Reports = () => {
 
   // TDS quarter
   const [tdsQuarter,       setTdsQuarter]       = useState('Q1');
+
+  // ── TDS mode per report (include / exclude) ───────────────────────────────
+  const [monthlyTdsMode, setMonthlyTdsMode] = useState('include');
+  const [annualTdsMode,  setAnnualTdsMode]  = useState('include');
+  const [tdsTdsMode,     setTdsTdsMode]     = useState('include');
+  const [stmtTdsMode,    setStmtTdsMode]    = useState('include');
 
   const setLoad = (key, val) => setLoading((prev) => ({ ...prev, [key]: val }));
 
@@ -1453,7 +1534,8 @@ const Reports = () => {
         return;
       }
 
-      const grp       = groupPayments(raw);
+      const grp       = applyTdsMode(groupPayments(raw), monthlyTdsMode);
+      const showTds   = monthlyTdsMode === 'include';
       const hasGst    = grp.some((g) => g._gstTotal > 0);
       const splitCols = buildSplitColDefs(grp);
 
@@ -1463,7 +1545,7 @@ const Reports = () => {
         'Customer ID':     g.customer_code || '',
         'PAN Number':      g.pan_number    || '',
         'Bank Account No': g.bank_account_number || '',
-        'Unit No':         g.unit_no       || '',                // ← added
+        'Unit No':         g.unit_no       || '',
         'Agreement Type':  g.agreement_type || '',
         'Payment Date':    g.payment_date ? formatDate(g.payment_date) : '',
         'Period':          g.payment_month || '',
@@ -1471,7 +1553,7 @@ const Reports = () => {
         'Base Rent (₹)':   r0(g.base_rent),
         'Escalation (%)':  parseFloat(g.escalation_rate) || 0,
         'Gross Rent (₹)':  r0(g._gross),
-        'TDS (₹)':         r0(g._tds),
+        ...(showTds ? { 'TDS (₹)': r0(g._tds) } : {}),
         'Net Rent (₹)':    r0(g._net),
         ...(hasGst ? {
           'GST No':            g.gst_no || '-',
@@ -1492,10 +1574,12 @@ const Reports = () => {
 
       rows.push({
         'S.No': '', 'Customer Name': 'TOTAL', 'Customer ID': '', 'PAN Number': '',
-        'Bank Account No': '', 'Unit No': '', 'Agreement Type': '',              // ← updated
+        'Bank Account No': '', 'Unit No': '', 'Agreement Type': '',
         'Payment Date': '', 'Period': '', 'Inst Count': grp.length,
         'Base Rent (₹)': '', 'Escalation (%)': '',
-        'Gross Rent (₹)': tG, 'TDS (₹)': tT, 'Net Rent (₹)': tN,
+        'Gross Rent (₹)': tG,
+        ...(showTds ? { 'TDS (₹)': tT } : {}),
+        'Net Rent (₹)': tN,
         ...(hasGst ? {
           'GST No': '', 'CGST Amt (₹)': '', 'SGST Amt (₹)': '',
           'Total GST (₹)': tGst, 'Net Transfer (₹)': r0(r2(tN + tGst)),
@@ -1507,13 +1591,15 @@ const Reports = () => {
 
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.json_to_sheet(rows);
-      // Unit No col (wch:10) replaces Property col (wch:16) — same position
+
       const baseCols = hasGst
-        ? [{wch:5},{wch:28},{wch:12},{wch:13},{wch:20},{wch:10},{wch:16},{wch:13},{wch:12},
-           {wch:6},{wch:12},{wch:10},{wch:14},{wch:12},{wch:14},
-           {wch:16},{wch:12},{wch:12},{wch:14},{wch:14},{wch:10}]
-        : [{wch:5},{wch:28},{wch:12},{wch:13},{wch:20},{wch:10},{wch:16},{wch:13},{wch:12},
-           {wch:6},{wch:12},{wch:10},{wch:14},{wch:12},{wch:14},{wch:10}];
+        ? (showTds
+            ? [{wch:5},{wch:28},{wch:12},{wch:13},{wch:20},{wch:10},{wch:16},{wch:13},{wch:12},{wch:6},{wch:12},{wch:10},{wch:14},{wch:12},{wch:14},{wch:16},{wch:12},{wch:12},{wch:14},{wch:14},{wch:10}]
+            : [{wch:5},{wch:28},{wch:12},{wch:13},{wch:20},{wch:10},{wch:16},{wch:13},{wch:12},{wch:6},{wch:12},{wch:10},{wch:14},{wch:14},{wch:16},{wch:12},{wch:12},{wch:14},{wch:14},{wch:10}])
+        : (showTds
+            ? [{wch:5},{wch:28},{wch:12},{wch:13},{wch:20},{wch:10},{wch:16},{wch:13},{wch:12},{wch:6},{wch:12},{wch:10},{wch:14},{wch:12},{wch:14},{wch:10}]
+            : [{wch:5},{wch:28},{wch:12},{wch:13},{wch:20},{wch:10},{wch:16},{wch:13},{wch:12},{wch:6},{wch:12},{wch:10},{wch:14},{wch:14},{wch:10}]);
+
       styleHeader(ws, injectSplitWidths(baseCols, splitCols, 1));
       styleTotalsRow(ws, rows.length);
       XLSX.utils.book_append_sheet(wb, ws, 'Monthly Report');
@@ -1524,18 +1610,20 @@ const Reports = () => {
         ['Month',         monthlyMonth],
         ['Agreement',     monthlyAgreement || 'All'],
         ['Customer',      custLabel],
+        ['TDS Mode',      showTds ? 'Including TDS' : 'Excluding TDS'],
         ['Generated',     new Date().toLocaleString()], [''],
         ['Total Customers (grouped)', grp.length],
         ['Total Gross (₹)',    tG],
-        ['Total TDS (₹)',      tT],
+        ...(showTds ? [['Total TDS (₹)', tT]] : []),
         ['Total Net Rent (₹)', tN],
         ...(hasGst ? [['Total GST (₹)', tGst], ['Total Payable (₹)', r0(r2(tN + tGst))]] : []),
       ]);
       summaryWs['!cols'] = [{ wch: 22 }, { wch: 50 }];
       XLSX.utils.book_append_sheet(wb, summaryWs, 'Summary');
 
-      const custSuffix = monthlyCustomer ? `_${monthlyCustomer.customer.customer_name.replace(/\s+/g,'_')}` : '';
-      XLSX.writeFile(wb, `Monthly_Report_${monthlyMonth}${custSuffix}.xlsx`);
+      const custSuffix  = monthlyCustomer ? `_${monthlyCustomer.customer.customer_name.replace(/\s+/g,'_')}` : '';
+      const tdsSuffix   = showTds ? '' : '_ExclTDS';
+      XLSX.writeFile(wb, `Monthly_Report_${monthlyMonth}${custSuffix}${tdsSuffix}.xlsx`);
       toast.success('Monthly report downloaded!');
     } catch (err) { console.error(err); toast.error('Failed to generate monthly report'); }
     finally { setLoad('monthly', false); }
@@ -1558,7 +1646,8 @@ const Reports = () => {
         return;
       }
 
-      const grp       = groupPayments(raw);
+      const grp       = applyTdsMode(groupPayments(raw), annualTdsMode);
+      const showTds   = annualTdsMode === 'include';
       const hasGst    = grp.some((g) => g._gstTotal > 0);
       const splitCols = buildSplitColDefs(grp);
 
@@ -1568,11 +1657,11 @@ const Reports = () => {
         'Customer Name':   g.customer_name || '',
         'PAN Number':      g.pan_number    || '',
         'Bank Account No': g.bank_account_number || '',
-        'Unit No':         g.unit_no       || '',                // ← added
+        'Unit No':         g.unit_no       || '',
         'Agreement Type':  g.agreement_type || '',
         'Inst Count':      g._count,
         'Gross Rent (₹)':  r0(g._gross),
-        'TDS (₹)':         r0(g._tds),
+        ...(showTds ? { 'TDS (₹)': r0(g._tds) } : {}),
         'Net Rent (₹)':    r0(g._net),
         ...(hasGst ? {
           'GST Total (₹)':    r0(g._gstTotal),
@@ -1590,9 +1679,11 @@ const Reports = () => {
 
       rows.push({
         'S.No': '', 'Month': '', 'Customer Name': 'GRAND TOTAL', 'PAN Number': '',
-        'Bank Account No': '', 'Unit No': '', 'Agreement Type': '',              // ← updated
+        'Bank Account No': '', 'Unit No': '', 'Agreement Type': '',
         'Inst Count': grp.length,
-        'Gross Rent (₹)': tG, 'TDS (₹)': tT, 'Net Rent (₹)': tN,
+        'Gross Rent (₹)': tG,
+        ...(showTds ? { 'TDS (₹)': tT } : {}),
+        'Net Rent (₹)': tN,
         ...(hasGst ? { 'GST Total (₹)': tGst, 'Net Transfer (₹)': r0(r2(tN + tGst)) } : {}),
         ...splitTotalsFields(grp, splitCols),
         ...splitSumTotalField(grp, splitCols),
@@ -1601,12 +1692,15 @@ const Reports = () => {
 
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.json_to_sheet(rows);
-      // Unit No col (wch:10) replaces Property col (wch:16) — same position
+
       const baseCols = hasGst
-        ? [{wch:5},{wch:12},{wch:28},{wch:13},{wch:20},{wch:10},{wch:16},{wch:6},
-           {wch:14},{wch:12},{wch:14},{wch:14},{wch:14},{wch:10}]
-        : [{wch:5},{wch:12},{wch:28},{wch:13},{wch:20},{wch:10},{wch:16},{wch:6},
-           {wch:14},{wch:12},{wch:14},{wch:10}];
+        ? (showTds
+            ? [{wch:5},{wch:12},{wch:28},{wch:13},{wch:20},{wch:10},{wch:16},{wch:6},{wch:14},{wch:12},{wch:14},{wch:14},{wch:14},{wch:10}]
+            : [{wch:5},{wch:12},{wch:28},{wch:13},{wch:20},{wch:10},{wch:16},{wch:6},{wch:14},{wch:14},{wch:14},{wch:14},{wch:10}])
+        : (showTds
+            ? [{wch:5},{wch:12},{wch:28},{wch:13},{wch:20},{wch:10},{wch:16},{wch:6},{wch:14},{wch:12},{wch:14},{wch:10}]
+            : [{wch:5},{wch:12},{wch:28},{wch:13},{wch:20},{wch:10},{wch:16},{wch:6},{wch:14},{wch:14},{wch:10}]);
+
       styleHeader(ws, injectSplitWidths(baseCols, splitCols, 1));
       styleTotalsRow(ws, rows.length, 'DCFCE7');
       XLSX.utils.book_append_sheet(wb, ws, 'All Payments');
@@ -1627,7 +1721,7 @@ const Reports = () => {
         .map(([month, d], i) => ({
           'S.No': i + 1, 'Month': month, 'Customers': d.count,
           'Gross (₹)':    r0(d.gross),
-          'TDS (₹)':      r0(d.tds),
+          ...(showTds ? { 'TDS (₹)': r0(d.tds) } : {}),
           'Net (₹)':      r0(d.net),
           ...(hasGst ? {
             'GST (₹)':      r0(d.gst),
@@ -1636,12 +1730,17 @@ const Reports = () => {
         }));
       const wsM = XLSX.utils.json_to_sheet(mRows);
       styleHeader(wsM, hasGst
-        ? [{wch:5},{wch:12},{wch:10},{wch:16},{wch:12},{wch:16},{wch:14},{wch:16}]
-        : [{wch:5},{wch:12},{wch:10},{wch:16},{wch:12},{wch:16}]);
+        ? (showTds
+            ? [{wch:5},{wch:12},{wch:10},{wch:16},{wch:12},{wch:16},{wch:14},{wch:16}]
+            : [{wch:5},{wch:12},{wch:10},{wch:16},{wch:16},{wch:14},{wch:16}])
+        : (showTds
+            ? [{wch:5},{wch:12},{wch:10},{wch:16},{wch:12},{wch:16}]
+            : [{wch:5},{wch:12},{wch:10},{wch:16},{wch:16}]));
       XLSX.utils.book_append_sheet(wb, wsM, 'Monthly Summary');
 
       const custSuffix = annualCustomer ? `_${annualCustomer.customer.customer_name.replace(/\s+/g,'_')}` : '';
-      XLSX.writeFile(wb, `Annual_Report_${fy.label.replace(/ /g, '_')}${custSuffix}.xlsx`);
+      const tdsSuffix  = showTds ? '' : '_ExclTDS';
+      XLSX.writeFile(wb, `Annual_Report_${fy.label.replace(/ /g, '_')}${custSuffix}${tdsSuffix}.xlsx`);
       toast.success('Annual report downloaded!');
     } catch (err) { console.error(err); toast.error('Failed to generate annual report'); }
     finally { setLoad('annual', false); }
@@ -1658,8 +1757,9 @@ const Reports = () => {
       let raw = result.data.payments || [];
       raw = applyCustomerFilter(raw, tdsCustomer);
 
-      const grp      = groupPayments(raw, { tdsOnly: true });
-      const eligible = grp.filter((g) => g._tds > 0);
+      const grp      = applyTdsMode(groupPayments(raw, { tdsOnly: true }), tdsTdsMode);
+      const showTds  = tdsTdsMode === 'include';
+      const eligible = grp.filter((g) => showTds ? g._tds > 0 : true);
       if (!eligible.length) {
         toast.warning(tdsCustomer
           ? `No TDS data for "${tdsCustomer.customer.customer_name}" in ${tdsQuarter}`
@@ -1676,12 +1776,14 @@ const Reports = () => {
         'Customer Name':   g.customer_name || '',
         'PAN Number':      g.pan_number    || '',
         'Bank Account No': g.bank_account_number || '',
-        'Unit No':         g.unit_no       || '',                // ← added
+        'Unit No':         g.unit_no       || '',
         'NRI':             (g.nri_status || '').toLowerCase() === 'yes' ? 'Yes' : 'No',
         'Inst Count':      g._count,
         'Gross Rent (₹)':  r0(g._gross),
-        'TDS Rate (%)':    parseFloat(g.tds_rate) || 10,
-        'TDS Amount (₹)':  r0(g._tds),
+        ...(showTds ? {
+          'TDS Rate (%)':   parseFloat(g.tds_rate) || 10,
+          'TDS Amount (₹)': r0(g._tds),
+        } : {}),
         'Net Rent (₹)':    r0(g._net),
         ...(hasGst ? {
           'GST No':            g.gst_no || '-',
@@ -1701,9 +1803,11 @@ const Reports = () => {
 
       dRows.push({
         'S.No': '', 'Payment Month': '', 'Customer Name': 'TOTAL', 'PAN Number': '',
-        'Bank Account No': '', 'Unit No': '', 'NRI': '',                         // ← updated
+        'Bank Account No': '', 'Unit No': '', 'NRI': '',
         'Inst Count': eligible.length,
-        'Gross Rent (₹)': tG, 'TDS Rate (%)': '', 'TDS Amount (₹)': tT, 'Net Rent (₹)': tN,
+        'Gross Rent (₹)': tG,
+        ...(showTds ? { 'TDS Rate (%)': '', 'TDS Amount (₹)': tT } : {}),
+        'Net Rent (₹)': tN,
         ...(hasGst ? {
           'GST No': '', 'CGST Amt (₹)': '', 'SGST Amt (₹)': '',
           'Total GST (₹)': tGst, 'Net Transfer (₹)': r0(r2(tN + tGst)),
@@ -1714,12 +1818,15 @@ const Reports = () => {
 
       const wb  = XLSX.utils.book_new();
       const wsD = XLSX.utils.json_to_sheet(dRows);
-      // Unit No col (wch:10) replaces Property col (wch:16) — same position
+
       const detailBase = hasGst
-        ? [{wch:5},{wch:14},{wch:28},{wch:13},{wch:20},{wch:10},{wch:5},{wch:6},
-           {wch:14},{wch:10},{wch:14},{wch:14},{wch:16},{wch:12},{wch:12},{wch:14},{wch:14}]
-        : [{wch:5},{wch:14},{wch:28},{wch:13},{wch:20},{wch:10},{wch:5},{wch:6},
-           {wch:14},{wch:10},{wch:14},{wch:14}];
+        ? (showTds
+            ? [{wch:5},{wch:14},{wch:28},{wch:13},{wch:20},{wch:10},{wch:5},{wch:6},{wch:14},{wch:10},{wch:14},{wch:14},{wch:16},{wch:12},{wch:12},{wch:14},{wch:14}]
+            : [{wch:5},{wch:14},{wch:28},{wch:13},{wch:20},{wch:10},{wch:5},{wch:6},{wch:14},{wch:14},{wch:16},{wch:12},{wch:12},{wch:14},{wch:14}])
+        : (showTds
+            ? [{wch:5},{wch:14},{wch:28},{wch:13},{wch:20},{wch:10},{wch:5},{wch:6},{wch:14},{wch:10},{wch:14},{wch:14}]
+            : [{wch:5},{wch:14},{wch:28},{wch:13},{wch:20},{wch:10},{wch:5},{wch:6},{wch:14},{wch:14}]);
+
       appendSplitWidths(detailBase, splitCols);
       styleHeader(wsD, detailBase);
       styleTotalsRow(wsD, dRows.length, 'FEE2E2');
@@ -1733,7 +1840,7 @@ const Reports = () => {
           custMap[k] = {
             name: g.customer_name, pan: g.pan_number,
             bank: g.bank_account_number,
-            unitNo: g.unit_no,                                   // ← added, property removed
+            unitNo: g.unit_no,
             gstNo: g.gst_no,
             gross: 0, tds: 0, net: 0, cgst: 0, sgst: 0, gst: 0, months: 0,
             splitBreakdown: g._splitBreakdown
@@ -1768,10 +1875,10 @@ const Reports = () => {
         'Customer Name':    c.name,
         'PAN Number':       c.pan  || '',
         'Bank Account No':  c.bank || '',
-        'Unit No':          c.unitNo || '',                      // ← added, property removed
+        'Unit No':          c.unitNo || '',
         'Months':           c.months,
         'Total Gross (₹)':  r0(c.gross),
-        'Total TDS (₹)':    r0(c.tds),
+        ...(showTds ? { 'Total TDS (₹)': r0(c.tds) } : {}),
         'Total Net (₹)':    r0(c.net),
         ...(hasGst ? {
           'GST No':              c.gstNo || '-',
@@ -1784,18 +1891,22 @@ const Reports = () => {
         ...splitSumField({ _splitBreakdown: c.splitBreakdown }, custSplitCols),
       }));
 
-      // Unit No col (wch:10) replaces Property col (wch:16) — same position
       const custBase = hasGst
-        ? [{wch:5},{wch:28},{wch:13},{wch:20},{wch:10},{wch:8},
-           {wch:14},{wch:14},{wch:14},{wch:16},{wch:12},{wch:12},{wch:14},{wch:14}]
-        : [{wch:5},{wch:28},{wch:13},{wch:20},{wch:10},{wch:8},{wch:14},{wch:14},{wch:14}];
+        ? (showTds
+            ? [{wch:5},{wch:28},{wch:13},{wch:20},{wch:10},{wch:8},{wch:14},{wch:14},{wch:14},{wch:16},{wch:12},{wch:12},{wch:14},{wch:14}]
+            : [{wch:5},{wch:28},{wch:13},{wch:20},{wch:10},{wch:8},{wch:14},{wch:14},{wch:16},{wch:12},{wch:12},{wch:14},{wch:14}])
+        : (showTds
+            ? [{wch:5},{wch:28},{wch:13},{wch:20},{wch:10},{wch:8},{wch:14},{wch:14},{wch:14}]
+            : [{wch:5},{wch:28},{wch:13},{wch:20},{wch:10},{wch:8},{wch:14},{wch:14}]);
+
       appendSplitWidths(custBase, custSplitCols);
       const wsC = XLSX.utils.json_to_sheet(cRows);
       styleHeader(wsC, custBase);
       XLSX.utils.book_append_sheet(wb, wsC, 'Customer Summary');
 
       const custSuffix = tdsCustomer ? `_${tdsCustomer.customer.customer_name.replace(/\s+/g,'_')}` : '';
-      XLSX.writeFile(wb, `TDS_Report_${tdsQuarter}_${fy.label.replace(/ /g, '_')}${custSuffix}.xlsx`);
+      const tdsSuffix  = showTds ? '' : '_ExclTDS';
+      XLSX.writeFile(wb, `TDS_Report_${tdsQuarter}_${fy.label.replace(/ /g, '_')}${custSuffix}${tdsSuffix}.xlsx`);
       toast.success('TDS report downloaded!');
     } catch (err) { console.error(err); toast.error('Failed to generate TDS report'); }
     finally { setLoad('tds', false); }
@@ -1821,10 +1932,11 @@ const Reports = () => {
         );
       }
 
-      const wb = XLSX.utils.book_new();
+      const wb      = XLSX.utils.book_new();
+      const showTds = stmtTdsMode === 'include';
 
       if (raw.length) {
-        const grp       = groupPayments(raw);
+        const grp       = applyTdsMode(groupPayments(raw), stmtTdsMode);
         const hasGst    = grp.some((g) => g._gstTotal > 0);
         const splitCols = buildSplitColDefs(grp);
 
@@ -1833,12 +1945,12 @@ const Reports = () => {
           'Payment Month':   g.payment_month || '',
           'Payment Date':    g.payment_date ? formatDate(g.payment_date) : '',
           'Period / Type':   g.payment_period || g.agreement_type || '',
-          'Unit No':         g.unit_no        || '',             // ← added, property removed
+          'Unit No':         g.unit_no        || '',
           'Inst Count':      g._count,
           'Base Rent (₹)':   r0(g.base_rent),
           'Escalation (%)':  parseFloat(g.escalation_rate) || 0,
           'Gross Rent (₹)':  r0(g._gross),
-          'TDS (₹)':         r0(g._tds),
+          ...(showTds ? { 'TDS (₹)': r0(g._tds) } : {}),
           'Net Rent (₹)':    r0(g._net),
           ...(hasGst ? {
             'CGST Amt (₹)':      r0(g._cgstAmt),
@@ -1858,9 +1970,11 @@ const Reports = () => {
 
         rows.push({
           'S.No': '', 'Payment Month': '', 'Payment Date': '', 'Period / Type': 'TOTAL',
-          'Unit No': '',                                         // ← updated
+          'Unit No': '',
           'Inst Count': grp.length, 'Base Rent (₹)': '', 'Escalation (%)': '',
-          'Gross Rent (₹)': tG, 'TDS (₹)': tT, 'Net Rent (₹)': tN,
+          'Gross Rent (₹)': tG,
+          ...(showTds ? { 'TDS (₹)': tT } : {}),
+          'Net Rent (₹)': tN,
           ...(hasGst ? {
             'CGST Amt (₹)': '', 'SGST Amt (₹)': '',
             'Total GST (₹)': tGst, 'Net Transfer (₹)': r0(r2(tN + tGst)),
@@ -1871,12 +1985,14 @@ const Reports = () => {
         });
 
         const ws = XLSX.utils.json_to_sheet(rows);
-        // Unit No col (wch:10) replaces Property col — same position after Period/Type
         const baseCols = hasGst
-          ? [{wch:5},{wch:14},{wch:14},{wch:26},{wch:10},{wch:6},{wch:14},{wch:12},
-             {wch:14},{wch:12},{wch:14},{wch:12},{wch:12},{wch:14},{wch:14},{wch:10}]
-          : [{wch:5},{wch:14},{wch:14},{wch:26},{wch:10},{wch:6},{wch:14},{wch:12},
-             {wch:14},{wch:12},{wch:14},{wch:10}];
+          ? (showTds
+              ? [{wch:5},{wch:14},{wch:14},{wch:26},{wch:10},{wch:6},{wch:14},{wch:12},{wch:14},{wch:12},{wch:14},{wch:12},{wch:12},{wch:14},{wch:14},{wch:10}]
+              : [{wch:5},{wch:14},{wch:14},{wch:26},{wch:10},{wch:6},{wch:14},{wch:12},{wch:14},{wch:14},{wch:12},{wch:12},{wch:14},{wch:14},{wch:10}])
+          : (showTds
+              ? [{wch:5},{wch:14},{wch:14},{wch:26},{wch:10},{wch:6},{wch:14},{wch:12},{wch:14},{wch:12},{wch:14},{wch:10}]
+              : [{wch:5},{wch:14},{wch:14},{wch:26},{wch:10},{wch:6},{wch:14},{wch:12},{wch:14},{wch:14},{wch:10}]);
+
         styleHeader(ws, injectSplitWidths(baseCols, splitCols, 1));
         styleTotalsRow(ws, rows.length, 'E0F2FE');
         XLSX.utils.book_append_sheet(wb, ws, 'Statement');
@@ -1897,12 +2013,13 @@ const Reports = () => {
         ['Customer Name',   cust.customer_name  || ''],
         ['Customer ID',     cust.customer_ref || cust.customer_id || ''],
         ['PAN Number',      cust.pan_number     || ''],
-        ['Unit No',         cust.unit_no        || ''],          // ← added, property removed
+        ['Unit No',         cust.unit_no        || ''],
         ['Floor / Unit',    `F${cust.floor_no || '?'} · U${cust.unit_no || '?'}`],
         ['Agreement',       cust.agreement_type || ''],
         ['Status',          cust.status         || ''],
         ['Bank A/C No',     cust.bank_account_number || ''],
         ['IFSC Code',       cust.ifsc_code      || ''],
+        ['TDS Mode',        showTds ? 'Including TDS' : 'Excluding TDS'],
         ['Generated On',    new Date().toLocaleString()], [''],
         ['Total Payments (grouped)', raw.length > 0
           ? groupPayments(raw).length
@@ -1911,7 +2028,8 @@ const Reports = () => {
       infoWs['!cols'] = [{ wch: 24 }, { wch: 36 }];
       XLSX.utils.book_append_sheet(wb, infoWs, 'Customer Info');
 
-      XLSX.writeFile(wb, `Statement_${(cust.customer_name || 'Customer').replace(/\s+/g, '_')}.xlsx`);
+      const tdsSuffix = showTds ? '' : '_ExclTDS';
+      XLSX.writeFile(wb, `Statement_${(cust.customer_name || 'Customer').replace(/\s+/g, '_')}${tdsSuffix}.xlsx`);
       toast.success('Statement downloaded!');
     } catch (err) { console.error(err); toast.error('Failed to generate statement'); }
     finally { setLoad('customer', false); }
@@ -1974,7 +2092,7 @@ const Reports = () => {
             badge={monthlyMonth} badgeColor="primary" accentColor="#2563EB"
             onGenerate={generateMonthlyReport} loadKey="monthly"
           >
-            <div className="row g-2">
+            <div className="row g-2 mb-2">
               <div className="col-7">
                 <label className="form-label small fw-semibold mb-1">Month</label>
                 <input type="month" className="form-control form-control-sm"
@@ -1990,12 +2108,11 @@ const Reports = () => {
                 </select>
               </div>
             </div>
-            <div className="mt-2">
-              <CustomerFilter value={monthlyCustomer} onChange={setMonthlyCustomer} />
-            </div>
+            <TdsModeDropdown value={monthlyTdsMode} onChange={setMonthlyTdsMode} accentColor="#2563EB" />
+            <CustomerFilter value={monthlyCustomer} onChange={setMonthlyCustomer} />
             <div className="p-2 rounded-2" style={{ background: '#EFF6FF', fontSize: '0.78rem' }}>
-              <strong>Columns:</strong> Gross · TDS · Net · Split 1…N · Total Split · Status
-              &nbsp;|&nbsp;<strong>Amounts:</strong> Whole ₹ (no decimals)
+              <strong>Columns:</strong> Gross · {monthlyTdsMode === 'include' ? 'TDS · ' : ''}Net · Split 1…N · Total Split · Status
+              &nbsp;|&nbsp;<strong>Amounts:</strong> Whole ₹
             </div>
           </ReportCard>
         </div>
@@ -2012,6 +2129,7 @@ const Reports = () => {
               <strong>FY:</strong> {fy.label} &nbsp;|&nbsp;
               <strong>Period:</strong> {fy.start} → {fy.end}
             </div>
+            <TdsModeDropdown value={annualTdsMode} onChange={setAnnualTdsMode} accentColor="#16A34A" />
             <CustomerFilter value={annualCustomer} onChange={setAnnualCustomer} />
             <div className="p-2 rounded-2" style={{ background: '#F0FDF4', fontSize: '0.78rem' }}>
               <strong>Sheets:</strong> All Payments + Monthly Summary · Split columns + Total Split (₹)
@@ -2039,6 +2157,7 @@ const Reports = () => {
                 </button>
               ))}
             </div>
+            <TdsModeDropdown value={tdsTdsMode} onChange={setTdsTdsMode} accentColor="#DC2626" />
             <CustomerFilter value={tdsCustomer} onChange={setTdsCustomer} />
             <div className="p-2 rounded-2" style={{ background: '#FEF2F2', fontSize: '0.78rem' }}>
               <strong>Sheets:</strong> Detail + Customer Summary · Split columns + Total Split (₹)
@@ -2075,9 +2194,9 @@ const Reports = () => {
               }
             />
             {stmtCustomer && (
-              <div className="mt-2 p-2 rounded-2 d-flex gap-2 align-items-center"
+              <div className="mt-2 mb-2 p-2 rounded-2 d-flex gap-2 align-items-center"
                 style={{ background: '#F5F3FF', fontSize: '0.78rem' }}>
-                <i className="bi bi-person-check-fill text-purple" style={{ color: '#7C3AED' }} />
+                <i className="bi bi-person-check-fill" style={{ color: '#7C3AED' }} />
                 <div>
                   <strong>{stmtCustomer.customer.customer_name}</strong>
                   <span className="text-muted ms-2">
@@ -2089,6 +2208,7 @@ const Reports = () => {
                 </div>
               </div>
             )}
+            <TdsModeDropdown value={stmtTdsMode} onChange={setStmtTdsMode} accentColor="#7C3AED" />
             <div className="mt-2 p-2 rounded-2" style={{ background: '#F5F3FF', fontSize: '0.78rem' }}>
               <strong>Sheets:</strong> Statement + Customer Info ·
               Shows customer info even if no payment was generated
@@ -2106,13 +2226,15 @@ const Reports = () => {
             </small>
             <div className="d-flex gap-2 flex-wrap">
               {[
-                'Gross Rent (₹)', 'TDS (₹)', 'Net Rent (₹)', 'GST (if applicable)', 'Net Transfer (₹)',
+                'Gross Rent (₹)', 'TDS (₹) — toggle per report', 'Net Rent (₹)',
+                'GST (if applicable)', 'Net Transfer (₹)',
                 'Unit No',
                 'Split 1 – Name / Bank / A/C / IFSC / ₹',
                 'Split 2 … N (auto-added)',
                 'Total Split (₹)  ← "-" if no splits',
                 'Amounts in whole ₹ — no decimals',
                 'Customer search in all reports',
+                'File name includes _ExclTDS suffix when TDS excluded',
               ].map((item) => (
                 <span key={item} className="badge bg-light text-dark border" style={{ fontSize: '0.72rem' }}>
                   {item}

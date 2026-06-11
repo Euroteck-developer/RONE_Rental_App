@@ -1049,7 +1049,7 @@ const { query, transaction } = require('../config/database');
 const crypto = require('crypto');
 const axios  = require('axios');
 
-// ─── Environment ────────────────────────────────────────────────────────────
+// ─── Environment ─────────────────────────────────────────────────────────────
 const IS_DEV = process.env.NODE_ENV !== 'production';
 
 const EASEBUZZ_KEY  = process.env.EASEBUZZ_KEY  || 'TESTKEY';
@@ -1062,7 +1062,7 @@ const EASEBUZZ_INITIATE_URL =
     ? 'https://pay.easebuzz.in/payment/initiateLink'
     : 'https://testpay.easebuzz.in/payment/initiateLink';
 
-// ─── Easebuzz helpers ────────────────────────────────────────────────────────
+// ─── Easebuzz helpers ─────────────────────────────────────────────────────────
 const generateInitiateHash = ({ txnid, amount, productinfo, firstname, email, udf1='', udf2='', udf3='', udf4='', udf5='' }) => {
   const str = `${EASEBUZZ_KEY}|${txnid}|${amount}|${productinfo}|${firstname}|${email}|${udf1}|${udf2}|${udf3}|${udf4}|${udf5}||||||${EASEBUZZ_SALT}`;
   return crypto.createHash('sha512').update(str).digest('hex');
@@ -1072,7 +1072,7 @@ const generateResponseHash = ({ status, txnid, amount, productinfo, firstname, e
   return crypto.createHash('sha512').update(str).digest('hex');
 };
 const generateTxnId = () => `TXN_${Date.now()}_${Math.random().toString(36).substring(2,9).toUpperCase()}`;
-const mockInitiateLink = ({ txnid, amount, productinfo, firstname, email, udf1 }) => {
+const mockInitiateLink = ({ txnid, amount }) => {
   if (DEV_RESULT === 'pending') return { data: { status: 0, error_desc: '[DEV] Simulated Easebuzz initiation error' } };
   console.info(`[EASEBUZZ DEV] Mock initiateLink OK  txnid:${txnid}  amount:₹${amount}`);
   return { data: { status: 1, data: `DEV_ACCESS_${txnid}` } };
@@ -1084,7 +1084,7 @@ const buildMockEasebuzzResponse = ({ txnid, amount, productinfo, firstname, emai
   return { txnid, amount, productinfo, firstname, email, udf1, udf2, udf3, udf4, udf5, status, easepayid, hash, payment_mode: 'upi', phone: '9999999999' };
 };
 
-// ─── Math helpers ────────────────────────────────────────────────────────────
+// ─── Math helpers ─────────────────────────────────────────────────────────────
 const toFloat      = (v, fb = 0) => { const n = parseFloat(v); return Number.isFinite(n) ? n : fb; };
 const round2       = (v) => parseFloat(toFloat(v).toFixed(2));
 const calculateTDS = (amount) => amount >= 50000 ? Math.round(amount * 0.10) : 0;
@@ -1296,17 +1296,14 @@ const parsePayoutSplits = (raw) => {
   return null;
 };
 
-// ─── enrichPayment: pulls unit_no / floor_no from customer_units if available ─
+// ─── enrichPayment ────────────────────────────────────────────────────────────
 const enrichPayment = (p, cust) => {
   const netPayout       = toFloat(p.net_payout);
   const gst             = computeGstForPayment(netPayout, cust);
   const splits          = parsePayoutSplits(cust.payout_splits);
   const payoutBreakdown = splits && splits.length > 0 ? splitPayoutForPayment(netPayout, splits) : null;
-
-  // Prefer customer_units columns; fall back to customers legacy columns
   const unit_no  = cust.cu_unit_no  || cust.unit_no  || null;
   const floor_no = cust.cu_floor_no || cust.floor_no  || null;
-
   return {
     ...p,
     customer_name:    cust.customer_name,
@@ -1320,22 +1317,47 @@ const enrichPayment = (p, cust) => {
   };
 };
 
-// ─── FR_JOIN helper ───────────────────────────────────────────────────────────
-// Used by generateMonthlyPayments / createPaymentSchedule.
-// Now also LEFT JOINs customer_units to get the correct unit_no / floor_no.
-const FR_JOIN = `
-  FROM customers c
-  LEFT JOIN customer_units cu
-         ON cu.customer_id = c.id
-        AND cu.deleted_at IS NULL
-  LEFT JOIN (
-    SELECT DISTINCT ON (customer_id)
-      customer_id, rent, tds_applicable, rental_value_per_sft,
-      total_sale_consideration, payment_closure_date, payment_mode, partial_payments
-    FROM financial_records
-    WHERE deleted_at IS NULL
-    ORDER BY customer_id, created_at DESC
-  ) fr ON c.id = fr.customer_id
+// ─── UNIT RESOLUTION JOIN (shared SQL fragment) ───────────────────────────────
+//
+// FIX (slow query + stale data):
+//
+// OLD approach — correlated subquery fires once per payment row (O(n)):
+//   LEFT JOIN customer_units cu ON cu.id = COALESCE(
+//     p.customer_unit_id,
+//     (SELECT id FROM customer_units WHERE customer_id = c.id ...)
+//   )
+//
+// NEW approach — two-step join:
+//   1. cu_direct: simple equality on customer_unit_id — O(1) via PK index
+//   2. cu_fb (LATERAL): only executes when customer_unit_id IS NULL, so most
+//      rows pay zero cost and the index on (customer_id, created_at) is used.
+//
+// Result columns: use COALESCE(cu_direct.col, cu_fb.col, c.col)
+// for every unit-level field (bank account, IFSC, unit_no, etc.)
+//
+const UNIT_JOIN = `
+  LEFT JOIN customer_units cu_direct
+         ON cu_direct.id = p.customer_unit_id
+        AND cu_direct.deleted_at IS NULL
+  LEFT JOIN LATERAL (
+    SELECT id, unit_no, floor_no, property_name,
+           bank_account_number, ifsc_code, bank_name, payout_splits
+    FROM customer_units
+    WHERE customer_id = c.id AND deleted_at IS NULL
+    ORDER BY created_at DESC
+    LIMIT 1
+  ) cu_fb ON (p.customer_unit_id IS NULL)
+`;
+
+// Helper: build the COALESCE expressions used in every SELECT
+const UNIT_COLS = `
+  COALESCE(cu_direct.unit_no,             cu_fb.unit_no,             c.unit_no)             AS unit_no,
+  COALESCE(cu_direct.floor_no,            cu_fb.floor_no,            c.floor_no)            AS floor_no,
+  COALESCE(cu_direct.property_name,       cu_fb.property_name,       c.property_name)       AS property_name,
+  COALESCE(cu_direct.bank_account_number, cu_fb.bank_account_number, c.bank_account_number) AS bank_account_number,
+  COALESCE(cu_direct.ifsc_code,           cu_fb.ifsc_code,           c.ifsc_code)           AS ifsc_code,
+  COALESCE(cu_direct.bank_name,           cu_fb.bank_name,           c.bank_name)           AS bank_name,
+  COALESCE(cu_direct.payout_splits,       cu_fb.payout_splits,       c.payout_splits)       AS payout_splits
 `;
 
 // ─── INSERT helper ────────────────────────────────────────────────────────────
@@ -1443,7 +1465,6 @@ const calculatePayment = async (req, res) => {
         });
 
     } else {
-      // Legacy path: lookup by customers.id — also get cu columns via subquery
       const { rows } = await query(
         `SELECT
            c.*,
@@ -1472,7 +1493,6 @@ const calculatePayment = async (req, res) => {
       if (!rows.length)
         return res.status(404).json({ success: false, error: 'Customer not found or inactive' });
       cust = rows[0];
-      // normalise so rest of handler uses the same field names
       cust.unit_no  = cust.cu_unit_no  || cust.unit_no;
       cust.floor_no = cust.cu_floor_no || cust.floor_no;
     }
@@ -1493,7 +1513,6 @@ const calculatePayment = async (req, res) => {
     const gst         = getGstConfig(cust);
     const splits      = parsePayoutSplits(cust.payout_splits);
 
-    // Duplicate check
     const dupQuery = customerUnitId
       ? `SELECT id, status FROM payments
          WHERE (customer_unit_id = $1 OR (customer_id = $2 AND customer_unit_id IS NULL))
@@ -1622,8 +1641,6 @@ const generateMonthlyPayments = async (req, res) => {
     const payments = [], skipped = [], duplicates = [];
 
     await transaction(async (client) => {
-      // KEY FIX: include customer_units in the query so cu_unit_no / cu_floor_no
-      // are always available for enrichPayment.
       let cq = `
         SELECT
           c.*,
@@ -1652,17 +1669,13 @@ const generateMonthlyPayments = async (req, res) => {
         WHERE c.deleted_at IS NULL AND c.status = 'Active'
       `;
       const cp = [];
-      if (agreementType) {
-        cq += ` AND c.agreement_type = $1`;
-        cp.push(agreementType);
-      }
+      if (agreementType) { cq += ` AND c.agreement_type = $1`; cp.push(agreementType); }
       cq += ` ORDER BY c.customer_name ASC`;
 
       const { rows: customers } = await client.query(cq, cp);
       if (!customers.length) throw new Error('No active customers found');
 
       for (const cust of customers) {
-        // Normalise unit fields: prefer customer_units columns
         cust.unit_no  = cust.cu_unit_no  || cust.unit_no;
         cust.floor_no = cust.cu_floor_no || cust.floor_no;
         cust.sqft     = cust.cu_sqft     || cust.sqft;
@@ -1678,10 +1691,7 @@ const generateMonthlyPayments = async (req, res) => {
         if (cust.agreement_type === '9-Year' && !cust.actual_occupancy_date) { skip('Missing occupancy date'); continue; }
 
         const startMonthKey = toMonthKey(getEffectiveStartDate(cust));
-        if (startMonthKey && rentMonth < startMonthKey) {
-          skip(`${cust.customer_name}: payment starts ${toMonthLabel(startMonthKey)} — skipping ${toMonthLabel(rentMonth)}`);
-          continue;
-        }
+        if (startMonthKey && rentMonth < startMonthKey) { skip(`${cust.customer_name}: payment starts ${toMonthLabel(startMonthKey)} — skipping ${toMonthLabel(rentMonth)}`); continue; }
 
         const { rows: dup } = await client.query(
           `SELECT id FROM payments WHERE customer_id = $1 AND payment_month = $2 AND status <> 'Cancelled' AND deleted_at IS NULL`,
@@ -1775,7 +1785,6 @@ const createPaymentSchedule = async (req, res) => {
 
     await transaction(async (client) => {
       for (const customerId of customerIds) {
-        // KEY FIX: join customer_units to get correct unit_no / floor_no
         const { rows } = await client.query(
           `SELECT
              c.*,
@@ -1809,7 +1818,6 @@ const createPaymentSchedule = async (req, res) => {
         if (!rows.length) { skip('Not found or inactive'); continue; }
         const cust = rows[0];
 
-        // Normalise unit fields
         cust.unit_no  = cust.cu_unit_no  || cust.unit_no;
         cust.floor_no = cust.cu_floor_no || cust.floor_no;
         cust.sqft     = cust.cu_sqft     || cust.sqft;
@@ -1891,9 +1899,10 @@ const createPaymentSchedule = async (req, res) => {
   }
 };
 
-// ─── getPaymentSchedule ────────────────────────────────────────────────────────
-// KEY FIX: JOIN customer_units so unit_no/floor_no always come from the
-// correct customer_units row, not the stale legacy customers columns.
+// ─── getPaymentSchedule ───────────────────────────────────────────────────────
+// FIX 1: Replace correlated subquery with two-step join (UNIT_JOIN).
+// FIX 2: Use COALESCE for bank_account_number / ifsc_code / bank_name
+//         so reports show the customer_units bank details, not stale legacy data.
 const getPaymentSchedule = async (req, res) => {
   try {
     const { month, status, agreementType } = req.query;
@@ -1903,7 +1912,7 @@ const getPaymentSchedule = async (req, res) => {
       SELECT
         p.*,
         c.customer_name,
-        c.customer_id                                        AS customer_code,
+        c.customer_id                                               AS customer_code,
         c.email,
         c.phone,
         c.pan_number,
@@ -1911,15 +1920,9 @@ const getPaymentSchedule = async (req, res) => {
         c.gst_no,
         c.cgst,
         c.sgst,
-        c.bank_account_number,
-        c.bank_name,
-        c.ifsc_code,
-        -- Prefer customer_units columns for unit / floor / property
-        COALESCE(cu.unit_no,       c.unit_no)               AS unit_no,
-        COALESCE(cu.floor_no,      c.floor_no)              AS floor_no,
-        COALESCE(cu.property_name, c.property_name)         AS property_name,
-        COALESCE(cu.payout_splits, c.payout_splits)         AS payout_splits,
-        fr.rent                                              AS financial_rent,
+        -- FIX: bank details must come from customer_units, not the stale customers columns
+        ${UNIT_COLS},
+        fr.rent                                                     AS financial_rent,
         fr.tds_applicable,
         fr.rental_value_per_sft,
         fr.total_sale_consideration,
@@ -1927,16 +1930,7 @@ const getPaymentSchedule = async (req, res) => {
         fr.payment_mode
       FROM payments p
       JOIN customers c ON p.customer_id = c.id
-      -- Join customer_units: prefer the row linked via customer_unit_id on the
-      -- payment, fall back to any active unit for this customer
-      LEFT JOIN customer_units cu
-             ON cu.id = COALESCE(
-                  p.customer_unit_id,
-                  (SELECT id FROM customer_units
-                   WHERE customer_id = c.id AND deleted_at IS NULL
-                   ORDER BY created_at DESC LIMIT 1)
-                )
-            AND cu.deleted_at IS NULL
+      ${UNIT_JOIN}
       LEFT JOIN (
         SELECT DISTINCT ON (customer_id)
           customer_id, rent, tds_applicable, rental_value_per_sft,
@@ -1962,7 +1956,7 @@ const getPaymentSchedule = async (req, res) => {
 };
 
 // ─── getPaymentById ───────────────────────────────────────────────────────────
-// KEY FIX: same customer_units join as getPaymentSchedule
+// FIX: same two-step join + correct bank details
 const getPaymentById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -1970,22 +1964,17 @@ const getPaymentById = async (req, res) => {
       `SELECT
          p.*,
          c.customer_name,
-         c.customer_id                                        AS customer_code,
+         c.customer_id                                               AS customer_code,
          c.email,
          c.phone,
          c.pan_number,
          c.agreement_type,
-         c.bank_account_number,
-         c.bank_name,
-         c.ifsc_code,
          c.gst_no,
          c.cgst,
          c.sgst,
-         COALESCE(cu.unit_no,       c.unit_no)               AS unit_no,
-         COALESCE(cu.floor_no,      c.floor_no)              AS floor_no,
-         COALESCE(cu.property_name, c.property_name)         AS property_name,
-         COALESCE(cu.payout_splits, c.payout_splits)         AS customer_payout_splits,
-         fr.rent                                              AS financial_rent,
+         -- FIX: bank details from customer_units
+         ${UNIT_COLS},
+         fr.rent                                                     AS financial_rent,
          fr.tds_applicable,
          fr.rental_value_per_sft,
          fr.total_sale_consideration,
@@ -1993,14 +1982,7 @@ const getPaymentById = async (req, res) => {
          fr.payment_mode
        FROM payments p
        JOIN customers c ON p.customer_id = c.id
-       LEFT JOIN customer_units cu
-              ON cu.id = COALESCE(
-                   p.customer_unit_id,
-                   (SELECT id FROM customer_units
-                    WHERE customer_id = c.id AND deleted_at IS NULL
-                    ORDER BY created_at DESC LIMIT 1)
-                 )
-             AND cu.deleted_at IS NULL
+       ${UNIT_JOIN}
        LEFT JOIN (
          SELECT DISTINCT ON (customer_id)
            customer_id, rent, tds_applicable, rental_value_per_sft,
@@ -2031,35 +2013,27 @@ const resetOrderCreated = async (req, res) => {
 };
 
 // ─── createEasebuzzOrder ──────────────────────────────────────────────────────
+// FIX: two-step join + correct bank details
 const createEasebuzzOrder = async (req, res) => {
   try {
     const { paymentIds } = req.body;
     if (!paymentIds?.length) return res.status(400).json({ success: false, error: 'No payment IDs provided' });
 
-    // KEY FIX: join customer_units here too for correct unit_no/floor_no
     const { rows: pmts } = await query(
       `SELECT
          p.*,
          c.customer_name,
-         c.customer_id                                        AS customer_code,
+         c.customer_id                                               AS customer_code,
          c.email,
          c.phone,
          c.gst_no,
          c.cgst,
          c.sgst,
-         COALESCE(cu.unit_no,  c.unit_no)                    AS unit_no,
-         COALESCE(cu.floor_no, c.floor_no)                   AS floor_no,
-         COALESCE(cu.payout_splits, c.payout_splits)         AS customer_payout_splits
+         -- FIX: bank details from customer_units
+         ${UNIT_COLS}
        FROM payments p
        JOIN customers c ON p.customer_id = c.id
-       LEFT JOIN customer_units cu
-              ON cu.id = COALESCE(
-                   p.customer_unit_id,
-                   (SELECT id FROM customer_units
-                    WHERE customer_id = c.id AND deleted_at IS NULL
-                    ORDER BY created_at DESC LIMIT 1)
-                 )
-             AND cu.deleted_at IS NULL
+       ${UNIT_JOIN}
        WHERE p.id = ANY($1) AND p.status = 'Pending' AND p.deleted_at IS NULL
        ORDER BY c.customer_name ASC, p.installment_no ASC NULLS LAST`,
       [paymentIds]
@@ -2071,7 +2045,7 @@ const createEasebuzzOrder = async (req, res) => {
       const cgstRate = hasGst ? (toFloat(p.cgst) || 9) : 0, sgstRate = hasGst ? (toFloat(p.sgst) || 9) : 0;
       const cgstAmt = hasGst ? round2(netPayout * cgstRate / 100) : 0, sgstAmt = hasGst ? round2(netPayout * sgstRate / 100) : 0;
       const totalGst = round2(cgstAmt + sgstAmt), chargeAmt = round2(netPayout + totalGst);
-      const splits = parsePayoutSplits(p.payout_splits || p.customer_payout_splits);
+      const splits = parsePayoutSplits(p.payout_splits);
       return { ...p, netPayout, hasGst, cgstRate, sgstRate, cgstAmt, sgstAmt, totalGst, chargeAmt, splits };
     });
 
@@ -2084,7 +2058,7 @@ const createEasebuzzOrder = async (req, res) => {
     const customerMap = new Map();
     for (const p of paymentBreakdown) {
       const cid = p.customer_id;
-      if (!customerMap.has(cid)) customerMap.set(cid, { customer_id: cid, customer_name: p.customer_name, customer_code: p.customer_code, unit_no: p.unit_no, floor_no: p.floor_no, email: p.email, phone: p.phone, gst_no: p.gst_no || null, payout_splits: p.splits || null, payments: [], net_payout: 0, total_gst: 0, charge_amount: 0 });
+      if (!customerMap.has(cid)) customerMap.set(cid, { customer_id: cid, customer_name: p.customer_name, customer_code: p.customer_code, unit_no: p.unit_no, floor_no: p.floor_no, email: p.email, phone: p.phone, gst_no: p.gst_no || null, payout_splits: p.splits || null, bank_account_number: p.bank_account_number, ifsc_code: p.ifsc_code, bank_name: p.bank_name, payments: [], net_payout: 0, total_gst: 0, charge_amount: 0 });
       const c = customerMap.get(cid);
       c.payments.push({ payment_id: p.id, installment_no: p.installment_no, total_installments: p.total_installments, payment_month: p.payment_month, gross_amount: toFloat(p.gross_amount), tds_amount: toFloat(p.tds_amount), net_payout: p.netPayout, has_gst: p.hasGst, cgst_rate: p.cgstRate, sgst_rate: p.sgstRate, cgst_amount: p.cgstAmt, sgst_amount: p.sgstAmt, total_gst: p.totalGst, charge_amount: p.chargeAmt, payout_breakdown: p.splits ? splitPayoutForPayment(p.netPayout, p.splits) : null });
       c.net_payout    = round2(c.net_payout    + p.netPayout);
@@ -2202,7 +2176,7 @@ const initiatePaymentBatch = async (req, res) => {
 };
 
 // ─── getPaymentHistory ────────────────────────────────────────────────────────
-// KEY FIX: join customer_units for correct unit_no / floor_no
+// FIX: two-step join + correct bank details for reports/downloads
 const getPaymentHistory = async (req, res) => {
   try {
     const { page = 1, limit = 10, customerId, status, startDate, endDate, month, agreementType } = req.query;
@@ -2211,35 +2185,23 @@ const getPaymentHistory = async (req, res) => {
     let queryText = `
       SELECT
         p.*,
-        p.payout_splits                                      AS payment_payout_splits,
-        c.customer_id                                        AS customer_code,
+        p.payout_splits                                             AS payment_payout_splits,
+        c.customer_id                                               AS customer_code,
         c.customer_name,
         c.pan_number,
         c.email,
         c.phone,
-        c.bank_account_number,
-        c.ifsc_code,
-        c.bank_name,
         c.agreement_type,
         c.tds_applicable,
         c.nri_status,
         c.gst_no,
         c.cgst,
         c.sgst,
-        COALESCE(cu.unit_no,       c.unit_no)               AS unit_no,
-        COALESCE(cu.floor_no,      c.floor_no)              AS floor_no,
-        COALESCE(cu.property_name, c.property_name)         AS property_name,
-        COALESCE(cu.payout_splits, c.payout_splits)         AS customer_payout_splits
+        -- FIX: bank details from customer_units, not legacy customers columns
+        ${UNIT_COLS}
       FROM payments p
       JOIN customers c ON p.customer_id = c.id
-      LEFT JOIN customer_units cu
-             ON cu.id = COALESCE(
-                  p.customer_unit_id,
-                  (SELECT id FROM customer_units
-                   WHERE customer_id = c.id AND deleted_at IS NULL
-                   ORDER BY created_at DESC LIMIT 1)
-                )
-            AND cu.deleted_at IS NULL
+      ${UNIT_JOIN}
       WHERE p.deleted_at IS NULL
     `;
     const queryParams = []; let pi = 1;
