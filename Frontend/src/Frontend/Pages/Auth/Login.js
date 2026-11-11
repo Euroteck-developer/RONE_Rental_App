@@ -39,13 +39,13 @@ const Login = () => {
   }, []);
 
   useEffect(() => {
-    const saved = localStorage.getItem('rpm_remembered_email');
+    const saved = sessionStorage.getItem('rpm_remembered_email');
     if (saved) {
       setFormData(prev => ({ ...prev, email: saved }));
       setRemember(true);
     }
     /* restore blocked time if page refreshed */
-    const until = localStorage.getItem('rpm_blocked_until');
+    const until = sessionStorage.getItem('rpm_blocked_until');
     if (until) {
       const diff = Math.ceil((parseInt(until, 10) - Date.now()) / 1000);
       if (diff > 0) startBlockCountdown(diff);
@@ -59,7 +59,7 @@ const Login = () => {
       setBlockedSecs(prev => {
         if (prev <= 1) {
           clearInterval(timerRef.current);
-          localStorage.removeItem('rpm_blocked_until');
+          sessionStorage.removeItem('rpm_blocked_until');
           return 0;
         }
         return prev - 1;
@@ -100,7 +100,7 @@ const Login = () => {
 
     setLoading(true);
     try {
-      localStorage.setItem('rpm_remembered_email', formData.email.trim().toLowerCase());
+      sessionStorage.setItem('rpm_remembered_email', formData.email.trim().toLowerCase());
 
       const result = await login(formData.email, formData.password);
 
@@ -113,12 +113,12 @@ const Login = () => {
             ? result.blockedFor
             : Math.ceil((result.blockedUntil - Date.now()) / 1000);
           const until = Date.now() + secs * 1000;
-          localStorage.setItem('rpm_blocked_until', until.toString());
+          sessionStorage.setItem('rpm_blocked_until', until.toString());
           startBlockCountdown(secs);
           toast.error(`Account locked. Try again in ${fmtTime(secs)}.`);
         } else if (result.attemptsRemaining !== undefined) {
           toast.error(
-            `${result.error || 'Invalid credentials'}. ${result.attemptsRemaining} attempt${result.attemptsRemaining !== 1 ? 's' : ''} remaining.`
+            `${result.error || 'Invalid email or password'}. ${result.attemptsRemaining} attempt${result.attemptsRemaining !== 1 ? 's' : ''} remaining.`
           );
         } else {
           toast.error(result.error || 'Login failed');

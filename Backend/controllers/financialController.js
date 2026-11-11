@@ -412,7 +412,45 @@ const getFinancialSummary = async (_req, res) => {
   }
 };
 
+/* ─── STATUS SUMMARY (read-only) ─────────────────────────────────────────────
+   GET /financial/status-summary
+   How many units have financial data filled vs pending, plus the pending list
+   (complete — no cap) so users can see exactly which units are missing. */
+const getFinancialStatusSummary = async (_req, res) => {
+  try {
+    const { rows } = await query(
+      `SELECT cu.id AS customer_unit_id, cu.unit_ref, cu.floor_no, cu.unit_no,
+              cu.property_name, cu.created_at,
+              c.id AS customer_db_id, c.customer_id AS customer_ref, c.customer_name,
+              (fr.id IS NOT NULL) AS has_financial
+       FROM customer_units cu
+       JOIN customers c ON c.id = cu.customer_id AND c.deleted_at IS NULL
+       LEFT JOIN LATERAL (
+         SELECT id FROM financial_records
+         WHERE customer_unit_id = cu.id AND deleted_at IS NULL
+         LIMIT 1
+       ) fr ON TRUE
+       WHERE cu.deleted_at IS NULL
+       ORDER BY (fr.id IS NOT NULL) ASC, cu.created_at DESC, cu.id DESC`
+    );
+    const pendingList = rows.filter((r) => !r.has_financial);
+    return res.json({
+      success: true,
+      data: {
+        totalUnits: rows.length,
+        filled:     rows.length - pendingList.length,
+        pending:    pendingList.length,
+        pendingList,
+      },
+    });
+  } catch (err) {
+    console.error('[getFinancialStatusSummary]', err);
+    return res.status(500).json({ success: false, error: 'Failed to fetch financial status' });
+  }
+};
+
 module.exports = {
+  getFinancialStatusSummary,
   upsertFinancialRecord,
   getAllFinancialRecords,
   getFinancialRecordByCustomer,

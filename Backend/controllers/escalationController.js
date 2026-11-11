@@ -539,6 +539,7 @@
 'use strict';
 
 const { query, transaction } = require('../config/database');
+const { sendError, userError } = require('../utils/safeError');
 
 // ──────────────────────────────────────────────────────────────────────────────
 // After the multi-unit migration, floor_no and agreement_type live in
@@ -845,12 +846,12 @@ const applyEscalation = async (req, res) => {
         WHERE e.id = $1 AND e.deleted_at IS NULL
       `, [id]);
 
-      if (!rows.length)          throw new Error('Escalation not found');
+      if (!rows.length)          throw userError('Escalation not found', 404);
       const esc = rows[0];
-      if (esc.agreement_type !== '9-Year') throw new Error('Escalations only apply to 9-Year rental customers');
-      if (esc.floor_no !== '7')            throw new Error('Escalations only apply to Floor 7 customers');
-      if (!esc.actual_occupancy_date)      throw new Error('Customer must have an actual occupancy date');
-      if (esc.status === 'Applied')        throw new Error('Escalation has already been applied');
+      if (esc.agreement_type !== '9-Year') throw userError('Escalations only apply to 9-Year rental customers', 400);
+      if (esc.floor_no !== '7')            throw userError('Escalations only apply to Floor 7 customers', 400);
+      if (!esc.actual_occupancy_date)      throw userError('Customer must have an actual occupancy date', 400);
+      if (esc.status === 'Applied')        throw userError('Escalation has already been applied', 400);
 
       // Update customers.base_rent_9_year (legacy)
       await client.query(
@@ -885,7 +886,7 @@ const applyEscalation = async (req, res) => {
     return res.json({ success: true, message: 'Escalation applied successfully' });
   } catch (error) {
     console.error('applyEscalation error:', error);
-    return res.status(500).json({ success: false, error: error.message || 'Failed to apply escalation' });
+    return sendError(res, error, 'applyEscalation');
   }
 };
 
@@ -1000,10 +1001,10 @@ const generateEscalations = async (req, res) => {
       `);
 
       if (eligible.length === 0) {
-        throw new Error(
+        throw userError(
           'No eligible customers found. ' +
           'Ensure Floor 7 / 9-Year customers have a financial record with rent > 0 and actual occupancy date set.'
-        );
+        , 404);
       }
 
       // Build FIRST and SECOND for customers with >= 3 or >= 6 years
@@ -1126,7 +1127,7 @@ const generateEscalations = async (req, res) => {
     });
   } catch (error) {
     console.error('generateEscalations error:', error);
-    return res.status(500).json({ success: false, error: error.message || 'Failed to generate escalations' });
+    return sendError(res, error, 'generateEscalations');
   }
 };
 

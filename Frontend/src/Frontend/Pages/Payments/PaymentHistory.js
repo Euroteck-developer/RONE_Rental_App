@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
 import paymentService from '../../Services/payment.service';
+import Pagination from '../../Components/Pagination';
 import { formatCurrency, formatDate } from '../../Utils/helpers';
 
 // ─── Payout split helpers ─────────────────────────────────────────────────────
@@ -333,7 +334,7 @@ const PaymentHistory = () => {
   useEffect(() => { 
     fetchPaymentHistory(); 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pagination.page, filters]);
+  }, [pagination.page, pagination.limit, filters]);
 
   const fetchPaymentHistory = async () => {
     try {
@@ -774,45 +775,15 @@ const PaymentHistory = () => {
               </div>
 
               {/* Pagination */}
-              <div className="d-flex justify-content-between align-items-center px-3 py-3 border-top flex-wrap gap-2">
-                <div className="text-muted small">
-                  Showing {((pagination.page - 1) * pagination.limit) + 1}–
-                  {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} entries
-                </div>
-                <nav>
-                  <ul className="pagination mb-0 pagination-sm">
-                    <li className={`page-item ${pagination.page === 1 ? 'disabled' : ''}`}>
-                      <button
-                        className="page-link"
-                        onClick={() => setPagination((p) => ({ ...p, page: p.page - 1 }))}
-                      >
-                        Previous
-                      </button>
-                    </li>
-                    {[...Array(Math.min(5, pagination.totalPages))].map((_, i) => {
-                      const pageNum = i + 1;
-                      return (
-                        <li key={pageNum} className={`page-item ${pagination.page === pageNum ? 'active' : ''}`}>
-                          <button
-                            className="page-link"
-                            onClick={() => setPagination((p) => ({ ...p, page: pageNum }))}
-                          >
-                            {pageNum}
-                          </button>
-                        </li>
-                      );
-                    })}
-                    <li className={`page-item ${pagination.page === pagination.totalPages ? 'disabled' : ''}`}>
-                      <button
-                        className="page-link"
-                        onClick={() => setPagination((p) => ({ ...p, page: p.page + 1 }))}
-                      >
-                        Next
-                      </button>
-                    </li>
-                  </ul>
-                </nav>
-              </div>
+              <Pagination
+                page={pagination.page}
+                totalPages={pagination.totalPages}
+                total={pagination.total}
+                limit={pagination.limit}
+                itemLabel="entries"
+                onPageChange={(pg) => setPagination((p) => ({ ...p, page: pg }))}
+                onLimitChange={(l) => setPagination((p) => ({ ...p, page: 1, limit: l }))}
+              />
             </>
           )}
         </div>

@@ -115,6 +115,9 @@ router.post(
 // List
 router.get('/', customerController.getAllCustomers);
 
+// GET /customers/check-email — live duplicate-email check for the form (read-only)
+router.get('/check-email', customerController.checkEmailAvailability);
+
 // GET /customers/lookup/pan/:pan  — used by CustomerForm PAN auto-fill
 router.get('/lookup/pan/:pan', authenticate, customerController.lookupByPAN);
 
@@ -130,6 +133,16 @@ router.get(
 router.put(
   '/:id',
   param('id').isUUID().withMessage('Invalid customer ID'),
+  body('email')
+    .optional({ checkFalsy: true })
+    .trim()
+    .customSanitizer((v) => (v ? v.toLowerCase() : v))
+    .isEmail().withMessage('Invalid email address'),
+  body('phone')
+    .optional({ checkFalsy: true })
+    .trim()
+    .customSanitizer((v) => (v ? v.replace(/[\s\-().+]/g, '') : v))
+    .matches(/^\d{7,15}$/).withMessage('Phone must be 7–15 digits'),
   handleValidationErrors,
   customerController.updateCustomer
 );

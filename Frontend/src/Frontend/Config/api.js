@@ -1,8 +1,8 @@
 import axios from 'axios';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || "https://rone-backend-dev.azurewebsites.net/api";
+// const API_BASE_URL = process.env.REACT_APP_API_URL || "https://rone-backend-dev.azurewebsites.net/api";
 
-// const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8080/api";
+const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8080/api";
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -15,7 +15,7 @@ const api = axios.create({
 // Request interceptor
 api.interceptors.request.use(
   (config) => {
-    const accessToken = localStorage.getItem('accessToken');
+    const accessToken = sessionStorage.getItem('accessToken');
     if (accessToken) {
       config.headers.Authorization = `Bearer ${accessToken}`;
     }
@@ -34,7 +34,7 @@ api.interceptors.response.use(
       originalRequest._retry = true;
 
       try {
-        const refreshToken = localStorage.getItem('refreshToken');
+        const refreshToken = sessionStorage.getItem('refreshToken');
 
         if (!refreshToken) throw new Error('No refresh token');
 
@@ -45,13 +45,13 @@ api.interceptors.response.use(
 
         const newAccessToken = res.data.data.accessToken;
 
-        localStorage.setItem('accessToken', newAccessToken);
+        sessionStorage.setItem('accessToken', newAccessToken);
 
         originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
         return api(originalRequest);
 
       } catch (err) {
-        localStorage.clear();
+        sessionStorage.clear();
         window.location.href = '/login';
         return Promise.reject(err);
       }

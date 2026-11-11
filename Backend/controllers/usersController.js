@@ -464,7 +464,7 @@ exports.createUser = async (req, res) => {
 
     // ── Duplicate email check ───────────────────────────────────────────────
     const existing = await query(
-      `SELECT id FROM users WHERE email = $1 AND deleted_at IS NULL`,
+      `SELECT id FROM users WHERE LOWER(TRIM(email)) = $1 AND deleted_at IS NULL`,
       [email]
     );
     if (existing.rows.length)
@@ -585,7 +585,7 @@ exports.updateUser = async (req, res) => {
 
     // ── Duplicate email check (exclude current user) ────────────────────────
     const dup = await query(
-      `SELECT id FROM users WHERE email = $1 AND id <> $2 AND deleted_at IS NULL`,
+      `SELECT id FROM users WHERE LOWER(TRIM(email)) = $1 AND id <> $2 AND deleted_at IS NULL`,
       [email, id]
     );
     if (dup.rows.length)

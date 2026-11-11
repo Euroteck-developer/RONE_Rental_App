@@ -98,6 +98,9 @@ router.get('/', financialController.getAllFinancialRecords);
  */
 router.get('/summary', financialController.getFinancialSummary);
 
+// Filled vs pending financial data per unit (read-only)
+router.get('/status-summary', financialController.getFinancialStatusSummary);
+
 /**
  * @swagger
  * /api/financial/customer/{customerId}:
@@ -142,6 +145,8 @@ router.get('/customer/:customerId', financialController.getFinancialRecordByCust
  *       404:
  *         description: Not found
  */
+router.get('/:id', financialController.getFinancialRecordById);
+
 router.delete('/:id', financialController.deleteFinancialRecord);
 
 module.exports = router;

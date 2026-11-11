@@ -43,7 +43,9 @@ const calcGST = (p) => {
 const groupPayments = (payments) => {
   const map = {};
   payments.forEach((p) => {
-    const key = `${p.customer_id || p.customer_code}_${p.payment_month}`;
+    // One row per FLAT per month (a customer with 2 flats gets 2 rows with correct unit nos)
+    const unitKey = p.customer_unit_id || p.resolved_unit_id || `pay_${p.id}`;
+    const key = `${unitKey}_${p.payment_month}`;
     const gst = calcGST(p);
     if (!map[key]) {
       map[key] = {
@@ -85,10 +87,10 @@ const MonthlySummary = () => {
   const fetchMonthData = useCallback(async (month) => {
     try {
       setStatsLoading(true);
-      const result = await paymentService.getPaymentHistory({
-        month, status: 'Completed', limit: 1000,
+      const payments = await paymentService.getAllPaymentHistory({
+        month, status: 'Completed',
       });
-      const payments = result.data.payments || [];
+      // (complete — every page loaded, never truncated)
       setMonthData(payments);
 
       // Compute totals over grouped rows (avoid double-counting installments)
@@ -99,7 +101,7 @@ const MonthlySummary = () => {
         totalTDS:       grouped.reduce((s, g) => s + g._tds,      0),
         totalNet:       grouped.reduce((s, g) => s + g._net,      0),
         totalGST:       grouped.reduce((s, g) => s + g._gstTotal, 0),
-        totalCustomers: grouped.length,
+        totalCustomers: new Set(payments.map((p) => p.customer_id)).size,
       });
     } catch {
       toast.error('Failed to load data for selected month');
@@ -129,7 +131,7 @@ const MonthlySummary = () => {
 
       const raw = monthData.length
         ? monthData
-        : (await paymentService.getPaymentHistory({ month: selectedMonth, status: 'Completed', limit: 1000 })).data.payments || [];
+        : await paymentService.getAllPaymentHistory({ month: selectedMonth, status: 'Completed' });
 
       if (!raw.length) { toast.warning(`No completed payments found for ${selectedMonth}`); return; }
 

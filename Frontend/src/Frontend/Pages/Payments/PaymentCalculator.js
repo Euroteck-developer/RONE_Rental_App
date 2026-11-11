@@ -226,16 +226,20 @@ const RazorpayErrorAlert = ({ error, onDismiss }) => {
   );
 };
 
-const SavedPaymentBanner = ({ record, onDismiss }) => {
+const SavedPaymentBanner = ({ record, calculatedGross, onDismiss }) => {
   if (!record) return null;
   const adj = parseFloat(record.adjustment_amount) || 0;
+  // Compare the generated (saved) gross rent with what the calculator computes now.
+  const savedGross = Math.round(parseFloat(record.gross_amount) || 0);
+  const calcGross  = calculatedGross != null ? Math.round(calculatedGross) : null;
+  const grossDiff  = calcGross != null ? savedGross - calcGross : 0;
   return (
     <div className="alert alert-success border-success mt-3 mb-0" style={{ borderLeft: '4px solid #16a34a' }}>
       <div className="d-flex align-items-start gap-2">
         <i className="bi bi-check-circle-fill text-success fs-5 flex-shrink-0 mt-1" />
         <div className="flex-grow-1">
           <div className="d-flex align-items-center gap-2 flex-wrap mb-1">
-            <strong>Payment Saved in Database</strong>
+            <strong>Payment already generated</strong>
             <span className="badge bg-success" style={{ fontSize: '0.65rem' }}>ID: {record.id}</span>
             <span className={`badge ${record.status === 'Completed' ? 'bg-success' : record.status === 'Pending' ? 'bg-warning text-dark' : 'bg-secondary'}`}
               style={{ fontSize: '0.65rem' }}>{record.status}</span>
@@ -251,6 +255,19 @@ const SavedPaymentBanner = ({ record, onDismiss }) => {
               </div>
             )}
           </div>
+          {calcGross != null && (
+            grossDiff === 0 ? (
+              <div className="small text-success mt-1">
+                <i className="bi bi-check2-circle me-1" />Generated gross rent matches the current calculation.
+              </div>
+            ) : (
+              <div className="small text-danger fw-semibold mt-1">
+                <i className="bi bi-exclamation-triangle me-1" />
+                Generated gross differs from the current calculation by {grossDiff > 0 ? '+' : '−'}₹{fmtINR(Math.abs(grossDiff))}
+                {' '}(calculated ₹{fmtINR(calcGross)}). Please verify the financial record.
+              </div>
+            )
+          )}
         </div>
         {onDismiss && <button type="button" className="btn-close btn-sm" onClick={onDismiss} />}
       </div>
@@ -281,7 +298,9 @@ const AdjustmentSection = ({
   const splits         = calculation.payoutSplits;
   const hasSplits      = Array.isArray(splits) && splits.length > 0;
   const adjustedSplits = hasSplits ? computeAdjustedSplits(adjustedNet, splits) : null;
-  const alreadySaved   = !!existingRecord;
+  // A cancelled payment does not block re-saving.
+  const alreadySaved   = !!existingRecord && existingRecord.status !== 'Cancelled';
+  const calculatedGross = derived.isAnyPartial ? derived.pTotals?.gross : derived.grossAmount;
   const SLOT_COLORS    = ['#2563eb', '#16a34a', '#dc2626', '#d97706', '#7c3aed'];
 
   return (
@@ -298,7 +317,7 @@ const AdjustmentSection = ({
         )}
       </div>
       <div className="card-body p-4">
-        {existingRecord && <SavedPaymentBanner record={existingRecord} />}
+        {existingRecord && <SavedPaymentBanner record={existingRecord} calculatedGross={calculatedGross} />}
         {savedRecord && !existingRecord && (
           <div className="alert alert-success d-flex align-items-center gap-2 mb-3 py-2">
             <i className="bi bi-check-circle-fill text-success" />
@@ -311,6 +330,7 @@ const AdjustmentSection = ({
           <div className="alert alert-warning py-2 small mt-3 mb-3">
             <i className="bi bi-exclamation-triangle me-1" />
             A <strong>{existingRecord.status}</strong> payment already exists for this month.
+            {' '}Saving is disabled — cancel the existing payment first if it needs to be re-saved.
           </div>
         )}
 
@@ -451,8 +471,8 @@ const PaymentCalculator = () => {
   const fetchCustomers = async () => {
     try {
       // getAllCustomers now returns customer_units rows joined with customer identity
-      const r = await customerService.getAllCustomers({ status: 'Active', limit: 1000 });
-      setCustomers(r.data.customers || []);
+      const all = await customerService.getAllCustomersComplete({ status: 'Active' });
+      setCustomers(all);
     } catch {
       toast.error('Failed to load customers');
     }
@@ -504,10 +524,11 @@ const PaymentCalculator = () => {
   };
 
   /* ── Fetch existing DB record for this unit+month ── */
-  const fetchExistingRecord = useCallback(async (dbCustomerId, rentMonth) => {
-    if (!dbCustomerId || !rentMonth) return;
+  // Looked up by UNIT so a customer with several flats sees this flat's record only.
+  const fetchExistingRecord = useCallback(async (dbCustomerId, rentMonth, customerUnitId = null) => {
+    if ((!dbCustomerId && !customerUnitId) || !rentMonth) return;
     try {
-      const res = await paymentService.getPaymentByMonth(dbCustomerId, rentMonth);
+      const res = await paymentService.getPaymentByMonth(dbCustomerId, rentMonth, customerUnitId);
       const rec = res?.data;
       if (rec) {
         setExistingRecord(rec);
@@ -577,7 +598,14 @@ const PaymentCalculator = () => {
       setCalculation(result);
       // Use dbCustomerId from result (customers.id) for existing record lookup
       const dbCustId = result.dbCustomerId || result.customerId;
-      if (dbCustId) fetchExistingRecord(dbCustId, result.rentMonth || rentMonth);
+      fetchExistingRecord(dbCustId, result.rentMonth || rentMonth, result.customerUnitId || unitId);
+      if (result.legacyWarning) toast.warning(result.legacyWarning, { autoClose: 10000 });
+      if (result.alreadyExists) {
+        toast.info(
+          `Payment for ${toMonthLabel(result.rentMonth || rentMonth)} already generated (${result.existingPayment?.status || 'saved'}). Showing the calculated rent and the saved amounts.`,
+          { autoClose: 7000 },
+        );
+      }
     } catch (err) {
       const errData = err?.response?.data || err || {};
       if (errData.code === 'PAYMENT_NOT_STARTED' || errData.startMonth) {
@@ -634,10 +662,13 @@ const PaymentCalculator = () => {
         : null;
 
       // Use dbCustomerId (customers.id) for the payment record
-      const dbCustomerId = calculation.dbCustomerId || calculation.customerId;
+      const dbCustomerId   = calculation.dbCustomerId || calculation.customerId;
+      // The payment MUST be saved against the selected flat (unit).
+      const customerUnitId = calculation.customerUnitId || selectedId;
 
       const payload = {
         customerId:        dbCustomerId,
+        customerUnitId,
         paymentDate,
         rentMonth:         calculation.rentMonth,
         grossAmount:       derived.isAnyPartial ? derived.pTotals.gross : derived.grossAmount,
@@ -653,7 +684,7 @@ const PaymentCalculator = () => {
       const result = await paymentService.savePaymentWithAdjustment(payload);
       const savedData = result?.data?.data || result?.data || {};
       setSavedRecord(savedData);
-      await fetchExistingRecord(dbCustomerId, calculation.rentMonth);
+      await fetchExistingRecord(dbCustomerId, calculation.rentMonth, customerUnitId);
       toast.success('Payment saved with adjustment!');
     } catch (err) {
       toast.error(err?.response?.data?.error || err?.message || 'Failed to save payment.');

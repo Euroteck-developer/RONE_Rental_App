@@ -1,7 +1,7 @@
 const express = require('express');
 const router  = express.Router();
 const { authenticate, authorize } = require('../middleware/auth');
-const { calculatePayment, getPaymentSchedule, getPaymentById, createPaymentSchedule, generateMonthlyPayments, initiatePaymentBatch, completePayment, getPaymentHistory, getPaymentStats,  resetOrderCreated, savePaymentWithAdjustment, getPaymentByMonth, getSavedAdjustments } = require('../controllers/paymentController');
+const { calculatePayment, getPaymentSchedule, getPaymentById, createPaymentSchedule, generateMonthlyPayments, initiatePaymentBatch, completePayment, getPaymentHistory, getReportTotals, getPaymentStats,  resetOrderCreated, savePaymentWithAdjustment, getPaymentByMonth, getSavedAdjustments } = require('../controllers/paymentController');
 
 /**
  * @swagger
@@ -39,6 +39,9 @@ router.get('/stats', authorize('SUPERADMIN', 'ADMIN'), getPaymentStats);
  *         description: Payment history list
  */
 router.get('/history', authorize('SUPERADMIN', 'ADMIN'), getPaymentHistory);
+
+// Read-only reconciliation totals (same filters as /history) used to verify Excel reports
+router.get('/report-totals', authorize('SUPERADMIN', 'ADMIN'), getReportTotals);
 
 /**
  * @swagger

@@ -19,7 +19,7 @@ const authenticate = async (req, res, next) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(401).json({ success: false, error: 'User not found' });
+      return res.status(401).json({ success: false, error: 'Session expired. Please log in again.' });
     }
 
     const user = result.rows[0];

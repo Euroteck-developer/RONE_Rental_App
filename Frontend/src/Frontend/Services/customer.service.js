@@ -83,6 +83,7 @@
 // export default customerService;
 
 import api from '../Config/api';
+import { fetchAllPages, REPORT_TIMEOUT } from '../Utils/fetchAllPages';
 
 // Custom error class to carry extra fields while satisfying no-throw-literal
 class ServiceError extends Error {
@@ -127,6 +128,36 @@ const customerService = {
     } catch (error) {
       throw new ServiceError(extractError(error, 'Failed to fetch customers'));
     }
+  },
+
+  /**
+   * Load EVERY customer unit matching the filters, page by page.
+   * Never silently truncates — throws if the row count does not match the total.
+   */
+  getAllCustomersComplete: async (params = {}) => {
+    try {
+      return await fetchAllPages((p) =>
+        api.get('/customers', { params: { ...params, ...p }, timeout: REPORT_TIMEOUT })
+          .then((r) => ({ items: r.data.data.customers || [], pagination: r.data.data.pagination })),
+      );
+    } catch (error) {
+      if (error?.name === 'IncompleteDataError') throw new ServiceError(error.message);
+      throw new ServiceError(extractError(error, 'Failed to fetch customers'));
+    }
+  },
+
+  /** Server-side search for async dropdowns (20 at a time, searches name/ref/PAN/unit). */
+  searchCustomers: async (search = '', extra = {}) => {
+    const response = await api.get('/customers', { params: { search, page: 1, limit: 20, ...extra } });
+    return response.data.data.customers || [];
+  },
+
+  /** Live duplicate-email check. Same PAN may reuse its email (additional flat). */
+  checkEmail: async (email, { pan, excludeUnitId } = {}) => {
+    const response = await api.get('/customers/check-email', {
+      params: { email, pan: pan || undefined, excludeUnitId: excludeUnitId || undefined },
+    });
+    return response.data.data;
   },
 
   lookupByPAN: async (pan) => {

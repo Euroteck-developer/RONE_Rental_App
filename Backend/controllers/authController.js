@@ -466,6 +466,18 @@ const {
 const crypto       = require('crypto');
 const emailService = require('../config/emailService');
 
+// ── Anti-enumeration helpers ─────────────────────────────────
+// Same generic messages whether or not an account exists, and a dummy bcrypt
+// comparison for unknown emails so response time does not reveal it either.
+const GENERIC_LOGIN_ERROR  = 'Invalid email or password.';
+const GENERIC_FORGOT_MSG   = 'If an account exists for this email, an OTP has been sent. Please check your inbox.';
+const MAX_OTP_ATTEMPTS     = 5;
+let   dummyHashPromise     = null;
+const getDummyHash = () => {
+  if (!dummyHashPromise) dummyHashPromise = hashPassword(crypto.randomBytes(16).toString('hex'));
+  return dummyHashPromise;
+};
+
 // ─────────────────────────────────────────────────────────────
 // REGISTER
 // ─────────────────────────────────────────────────────────────
@@ -521,53 +533,66 @@ const login = async (req, res) => {
     const { email, password } = req.body;
     const ipAddress = req.ip;
 
+    if (!email || !password || typeof email !== 'string' || typeof password !== 'string') {
+      return res.status(400).json({ success: false, error: 'Email and password are required.' });
+    }
+
     const result = await query(
       `SELECT id, email, password_hash, name, role, is_active,
               failed_login_attempts, account_locked_until
-       FROM users WHERE email = $1 AND deleted_at IS NULL`,
-      [email.toLowerCase()]
+       FROM users WHERE LOWER(email) = $1 AND deleted_at IS NULL`,
+      [email.trim().toLowerCase()]
     );
 
     if (result.rows.length === 0) {
+      // Equalise timing with the real-password path, then return the SAME message.
+      await comparePassword(password, await getDummyHash()).catch(() => false);
       await query(
         `INSERT INTO security_events (event_type, severity, ip_address, details)
          VALUES ($1, $2, $3, $4)`,
         ['FAILED_LOGIN', 'MEDIUM', ipAddress, JSON.stringify({ email })]
       ).catch(() => {}); // Don't fail login flow if security log fails
-      return res.status(401).json({ success: false, error: 'Invalid credentials' });
+      return res.status(401).json({ success: false, error: GENERIC_LOGIN_ERROR });
     }
 
     const user = result.rows[0];
+    const lockoutDuration = parseInt(process.env.ACCOUNT_LOCKOUT_DURATION_MINUTES || '30', 10);
+    const isLocked = user.account_locked_until && new Date(user.account_locked_until) > new Date();
 
-    if (user.account_locked_until && new Date(user.account_locked_until) > new Date()) {
-      return res.status(403).json({ success: false, error: 'Account locked' });
-    }
-
-    if (!user.is_active) {
-      return res.status(403).json({ success: false, error: 'Account deactivated' });
-    }
-
+    // Password is checked FIRST so that "locked"/"deactivated" are only ever
+    // revealed to someone who already knows the correct password.
     const isPasswordValid = await comparePassword(password, user.password_hash);
 
     if (!isPasswordValid) {
-      const failedAttempts = user.failed_login_attempts + 1;
-      const maxAttempts    = parseInt(process.env.MAX_LOGIN_ATTEMPTS || '5');
+      if (!isLocked) {
+        const failedAttempts = (user.failed_login_attempts || 0) + 1;
+        const maxAttempts    = parseInt(process.env.MAX_LOGIN_ATTEMPTS || '5', 10);
 
-      if (failedAttempts >= maxAttempts) {
-        const lockoutDuration = parseInt(process.env.ACCOUNT_LOCKOUT_DURATION_MINUTES || '30');
-        const lockUntil       = new Date(Date.now() + lockoutDuration * 60000);
-        await query(
-          `UPDATE users SET failed_login_attempts = $1, account_locked_until = $2 WHERE id = $3`,
-          [failedAttempts, lockUntil, user.id]
-        );
-        return res.status(403).json({ success: false, error: 'Account locked due to failed attempts' });
+        if (failedAttempts >= maxAttempts) {
+          const lockUntil = new Date(Date.now() + lockoutDuration * 60000);
+          await query(
+            `UPDATE users SET failed_login_attempts = $1, account_locked_until = $2 WHERE id = $3`,
+            [failedAttempts, lockUntil, user.id]
+          );
+        } else {
+          await query(
+            'UPDATE users SET failed_login_attempts = $1 WHERE id = $2',
+            [failedAttempts, user.id]
+          );
+        }
       }
+      return res.status(401).json({ success: false, error: GENERIC_LOGIN_ERROR });
+    }
 
-      await query(
-        'UPDATE users SET failed_login_attempts = $1 WHERE id = $2',
-        [failedAttempts, user.id]
-      );
-      return res.status(401).json({ success: false, error: 'Invalid credentials' });
+    if (isLocked) {
+      return res.status(403).json({
+        success: false,
+        error: `Too many failed attempts. Please try again after ${lockoutDuration} minutes or reset your password.`,
+      });
+    }
+
+    if (!user.is_active) {
+      return res.status(403).json({ success: false, error: 'Your account is inactive. Please contact your administrator.' });
     }
 
     const accessToken      = generateAccessToken(user.id, user.email, user.role);
@@ -673,21 +698,19 @@ const forgotPassword = async (req, res) => {
       return res.status(500).json({ success: false, error: 'Database error. Please try again.' });
     }
 
-    if (!userResult.rows.length) {
-      return res.status(404).json({
-        success: false,
-        error: 'No account found with this email address. Please check and try again.',
-      });
+    // SECURITY: never reveal whether an account exists or is deactivated.
+    // Unknown / inactive emails get the exact same 200 response, but no OTP.
+    if (!userResult.rows.length || !userResult.rows[0].is_active) {
+      await query(
+        `INSERT INTO security_events (event_type, severity, ip_address, details)
+         VALUES ($1, $2, $3, $4)`,
+        ['FORGOT_PASSWORD_UNKNOWN_OR_INACTIVE', 'LOW', req.ip || null,
+         JSON.stringify({ email: normalizedEmail, reason: userResult.rows.length ? 'inactive' : 'unknown' })]
+      ).catch(() => {});
+      return res.json({ success: true, message: GENERIC_FORGOT_MSG });
     }
 
     const user = userResult.rows[0];
-
-    if (!user.is_active) {
-      return res.status(403).json({
-        success: false,
-        error: 'Account deactivated. Please contact your administrator.',
-      });
-    }
 
     // ── 2. Rate limit: max 3 OTPs per 10 minutes ────────────
     let rateLimitResult;
@@ -754,10 +777,7 @@ const forgotPassword = async (req, res) => {
       });
     }
 
-    return res.json({
-      success: true,
-      message: 'OTP sent successfully. Please check your inbox.',
-    });
+    return res.json({ success: true, message: GENERIC_FORGOT_MSG });
 
   } catch (error) {
     console.error('[forgotPassword] Unexpected error:', error);
@@ -785,9 +805,10 @@ const verifyOTP = async (req, res) => {
          AND otp_hash  = $2
          AND expires_at > NOW()
          AND used      = false
+         AND COALESCE(failed_attempts, 0) < $3
        ORDER BY created_at DESC
        LIMIT 1`,
-      [normalizedEmail, otpHash]
+      [normalizedEmail, otpHash, MAX_OTP_ATTEMPTS]
     );
 
     if (!result.rows.length) {

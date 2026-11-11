@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import Select from 'react-select';
 import customerService from '../../Services/customer.service';
+import Pagination from '../../Components/Pagination';
 
 // ─── Delete Confirmation Modal ────────────────────────────────────────────────
 const DeleteConfirmModal = ({ customer, preview, loading, onConfirm, onCancel }) => {
@@ -197,10 +198,17 @@ const DeleteConfirmModal = ({ customer, preview, loading, onConfirm, onCancel })
 const CustomerList = () => {
   const navigate = useNavigate();
 
+  // Page & page size live in the URL (?page=14&limit=25) so refresh / Back keep the position.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlPage  = Math.max(1, parseInt(searchParams.get('page'), 10) || 1);
+  const urlLimit = [10, 25, 50, 100].includes(parseInt(searchParams.get('limit'), 10))
+    ? parseInt(searchParams.get('limit'), 10) : 10;
+
   const [customers,   setCustomers]   = useState([]);
   const [loading,     setLoading]     = useState(false);
-  const [pagination,  setPagination]  = useState({ page: 1, limit: 10, total: 0, totalPages: 0 });
-  const [filters,     setFilters]     = useState({ search: '', status: '', agreementType: '', floorNo: '' });
+  const [pagination,  setPagination]  = useState({ page: urlPage, limit: urlLimit, total: 0, totalPages: 0 });
+  const [filters,     setFilters]     = useState({ search: '', status: '', agreementType: '', floorNo: '', financialStatus: '' });
+  const [searchInput, setSearchInput] = useState('');
 
   // Delete modal state
   const [deleteModal,    setDeleteModal]    = useState(false);
@@ -214,21 +222,44 @@ const CustomerList = () => {
     ...Array.from({ length: 30 }, (_, i) => ({ value: String(i + 1), label: `Floor ${i + 1}` }))
   ];
 
-  useEffect(() => { 
-    fetchCustomers(); 
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pagination.page, filters]);
+  const goToPage = (page, limit = urlLimit) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('page', String(page));
+    next.set('limit', String(limit));
+    setSearchParams(next);
+  };
 
-  const fetchCustomers = async () => {
+  useEffect(() => {
+    fetchCustomers(urlPage, urlLimit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlPage, urlLimit, filters]);
+
+  // Debounce the search box so we don't hit the API on every keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (searchInput !== filters.search) {
+        setFilters((prev) => ({ ...prev, search: searchInput }));
+        if (urlPage !== 1) goToPage(1);
+      }
+    }, 350);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchInput]);
+
+  const fetchCustomers = async (page = urlPage, limit = urlLimit) => {
     try {
       setLoading(true);
-      const result = await customerService.getAllCustomers({
-        page: pagination.page,
-        limit: pagination.limit,
-        ...filters
-      });
+      const params = { page, limit };
+      Object.entries(filters).forEach(([k, v]) => { if (v) params[k] = v; });
+      const result = await customerService.getAllCustomers(params);
+      const pg = result.data.pagination;
+      // e.g. after a delete the last page can become empty → step back one page
+      if (result.data.customers.length === 0 && pg.total > 0 && page > pg.totalPages) {
+        goToPage(Math.max(1, pg.totalPages), limit);
+        return;
+      }
       setCustomers(result.data.customers);
-      setPagination(result.data.pagination);
+      setPagination(pg);
     } catch {
       toast.error('Failed to load customers');
     } finally {
@@ -239,7 +270,15 @@ const CustomerList = () => {
   const handleFilterChange = (e) => {
     const { name, value } = e.target;
     setFilters((prev) => ({ ...prev, [name]: value }));
-    setPagination((prev) => ({ ...prev, page: 1 }));
+    if (urlPage !== 1) goToPage(1);
+  };
+
+  const activeFilterCount = Object.values(filters).filter(Boolean).length;
+
+  const resetFilters = () => {
+    setSearchInput('');
+    setFilters({ search: '', status: '', agreementType: '', floorNo: '', financialStatus: '' });
+    goToPage(1);
   };
 
   // Open delete modal and fetch preview
@@ -282,6 +321,21 @@ const CustomerList = () => {
 
   return (
     <div className="container-fluid">
+      <style>{`
+        .cl-filter-bar { overflow-x: auto; padding-bottom: 2px; }
+        .cl-filter-bar > * { flex-shrink: 0; }
+        .cl-filter-bar > .input-group { flex-shrink: 1; }
+        .cl-table-wrap { max-height: calc(100vh - 330px); overflow-y: auto; }
+        .cl-table thead th {
+          position: sticky; top: 0; z-index: 2;
+          background: #f8fafc; color: #64748b;
+          font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+          border-bottom: 1px solid #e2e8f0; white-space: nowrap; padding: .7rem .75rem;
+        }
+        .cl-table tbody td { padding: .6rem .75rem; font-size: 0.875rem; border-color: #f1f5f9; }
+        .cl-table tbody tr:hover > * { background-color: #eef4ff !important; }
+        .cl-icon-btn { width: 32px; height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+      `}</style>
 
       {/* Delete Confirmation Modal */}
       {deleteModal && deleteTarget && (
@@ -305,125 +359,198 @@ const CustomerList = () => {
         </button>
       </div>
 
-      {/* Filters */}
-      <div className="card mb-4 shadow-sm">
-        <div className="card-body">
-          <div className="row g-3 align-items-end">
-            <div className="col-md-4">
+      {/* Filters — single line (scrolls horizontally on narrow screens, never wraps) */}
+      <div className="card mb-3 border-0 shadow-sm" style={{ borderRadius: 12 }}>
+        <div className="card-body py-3">
+          <div className="cl-filter-bar d-flex flex-nowrap align-items-center gap-2">
+            <div className="input-group flex-grow-1" style={{ minWidth: 260 }}>
+              <span className="input-group-text bg-white border-end-0">
+                <i className="bi bi-search text-muted" />
+              </span>
               <input
                 type="text"
-                className="form-control"
-                placeholder="Search by name, email, PAN, ID..."
+                className="form-control border-start-0 ps-0"
+                placeholder="Search name, email, PAN, ID, unit…"
                 name="search"
-                value={filters.search}
-                onChange={handleFilterChange}
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
               />
+              {searchInput && (
+                <button type="button" className="btn btn-outline-secondary border-start-0" title="Clear search"
+                  onClick={() => setSearchInput('')}>
+                  <i className="bi bi-x-lg" />
+                </button>
+              )}
             </div>
-            <div className="col-md-2">
+            <div style={{ width: 150, flexShrink: 0 }}>
               <Select
                 name="floorNo"
                 value={floorOptions.find((o) => o.value === filters.floorNo) || floorOptions[0]}
                 onChange={(sel) => handleFilterChange({ target: { name: 'floorNo', value: sel?.value || '' } })}
                 options={floorOptions}
                 placeholder="All Floors"
+                menuPortalTarget={document.body}
                 styles={{
-                  menu:     (p) => ({ ...p, maxHeight: 250 }),
-                  menuList: (p) => ({ ...p, maxHeight: 250, overflowY: 'auto' }),
+                  control:    (p) => ({ ...p, minHeight: 38 }),
+                  menuPortal: (p) => ({ ...p, zIndex: 9999 }),
+                  menu:       (p) => ({ ...p, maxHeight: 250 }),
+                  menuList:   (p) => ({ ...p, maxHeight: 250, overflowY: 'auto' }),
                 }}
               />
             </div>
-            <div className="col-md-2">
-              <select className="form-select" name="status" value={filters.status} onChange={handleFilterChange}>
-                <option value="">All Status</option>
-                <option value="Active">Active</option>
-                <option value="Inactive">Inactive</option>
-              </select>
-            </div>
-            <div className="col-md-2">
-              <select className="form-select" name="agreementType" value={filters.agreementType} onChange={handleFilterChange}>
-                <option value="">All Agreements</option>
-                <option value="Construction">Construction</option>
-                <option value="9-Year">9-Year</option>
-              </select>
-            </div>
-            <div className="col-md-2">
-              <button
-                className="btn btn-outline-secondary w-100"
-                onClick={() => { setFilters({ search: '', status: '', agreementType: '', floorNo: '' }); setPagination((p) => ({ ...p, page: 1 })); }}
-              >
-                <i className="bi bi-arrow-clockwise me-1"></i>Reset
-              </button>
-            </div>
+            <select className="form-select" style={{ width: 140, flexShrink: 0 }} name="status" value={filters.status} onChange={handleFilterChange}>
+              <option value="">All Status</option>
+              <option value="Active">Active</option>
+              <option value="Inactive">Inactive</option>
+            </select>
+            <select className="form-select" style={{ width: 160, flexShrink: 0 }} name="agreementType" value={filters.agreementType} onChange={handleFilterChange}>
+              <option value="">All Agreements</option>
+              <option value="Construction">Construction</option>
+              <option value="9-Year">9-Year</option>
+            </select>
+            <select className="form-select" style={{ width: 175, flexShrink: 0 }} name="financialStatus" value={filters.financialStatus} onChange={handleFilterChange}>
+              <option value="">Financial: All</option>
+              <option value="pending">Financial: Pending</option>
+              <option value="filled">Financial: Filled</option>
+            </select>
+            <button
+              type="button"
+              className="btn btn-outline-secondary d-flex align-items-center gap-1 flex-shrink-0"
+              onClick={resetFilters}
+              title="Clear all filters"
+            >
+              <i className="bi bi-arrow-counterclockwise" />Reset
+              {activeFilterCount > 0 && <span className="badge rounded-pill bg-primary ms-1">{activeFilterCount}</span>}
+            </button>
           </div>
         </div>
       </div>
 
       {/* Table */}
-      <div className="card shadow-sm">
+      <div className="card border-0 shadow-sm" style={{ borderRadius: 12, overflow: 'hidden' }}>
+        <div className="card-header bg-white d-flex align-items-center justify-content-between py-3">
+          <div className="d-flex align-items-center gap-2">
+            <i className="bi bi-people-fill text-primary" />
+            <span className="fw-semibold">Customers</span>
+            <span className="badge rounded-pill bg-primary-subtle text-primary border border-primary-subtle">
+              {pagination.total || 0}
+            </span>
+          </div>
+          {activeFilterCount > 0 && (
+            <small className="text-muted"><i className="bi bi-funnel-fill me-1" />{activeFilterCount} filter{activeFilterCount > 1 ? 's' : ''} active</small>
+          )}
+        </div>
         <div className="card-body p-0">
           {loading ? (
-            <div className="text-center py-5">
-              <div className="spinner-border text-primary" role="status"></div>
-              <p className="text-muted mt-3 mb-0">Loading customers...</p>
+            <div className="p-3">
+              {Array.from({ length: Math.min(pagination.limit || 10, 8) }).map((_, i) => (
+                <div key={i} className="placeholder-glow d-flex gap-3 py-2 border-bottom">
+                  <span className="placeholder col-1 rounded" />
+                  <span className="placeholder col-2 rounded" />
+                  <span className="placeholder col-3 rounded" />
+                  <span className="placeholder col-2 rounded" />
+                  <span className="placeholder col-2 rounded" />
+                </div>
+              ))}
             </div>
           ) : customers.length === 0 ? (
             <div className="text-center py-5">
-              <i className="bi bi-inbox" style={{ fontSize: '3rem', color: '#ccc' }}></i>
-              <p className="text-muted mt-3 mb-0">No customers found</p>
+              <i className="bi bi-inbox" style={{ fontSize: '3rem', color: '#cbd5e1' }}></i>
+              <p className="text-muted mt-3 mb-2">No customers found</p>
+              {activeFilterCount > 0 && (
+                <button type="button" className="btn btn-sm btn-outline-primary" onClick={resetFilters}>
+                  <i className="bi bi-x-circle me-1" />Clear filters
+                </button>
+              )}
             </div>
           ) : (
             <>
-              <div className="table-responsive">
-                <table className="table table-hover align-middle mb-0">
-                  <thead className="table-light">
+              <div className="table-responsive cl-table-wrap">
+                <table className="table table-hover table-striped align-middle mb-0 cl-table">
+                  <thead>
                     <tr>
                       <th>Customer ID</th>
-                      <th>Name</th>
-                      <th>Email</th>
-                      <th>Phone</th>
-                      <th>Sqft</th>
-                      <th>Floor</th>
-                      <th>Unit No</th>
+                      <th>Customer</th>
+                      <th>Contact</th>
+                      <th className="text-end">Sqft</th>
+                      <th>Floor · Unit</th>
                       <th>Agreement</th>
                       <th>Status</th>
-                      <th className="text-center">Actions</th>
+                      <th>Financial</th>
+                      <th className="text-center" style={{ width: 100 }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {customers.map((c) => (
                       <tr key={c.id}>
-                        <td><strong className="font-monospace">{c.customer_id}</strong></td>
-                        <td className="fw-semibold">{c.customer_name}</td>
-                        <td className="text-muted small">{c.email}</td>
-                        <td>{c.phone}</td>
-                        <td>{c.sqft ? parseInt(c.sqft).toLocaleString('en-IN') : '—'}</td>
-                        <td>{c.floor_no || '—'}</td>
-                        <td>{c.unit_no  || '—'}</td>
                         <td>
-                          <span className={`badge ${c.agreement_type === 'Construction' ? 'bg-warning text-dark' : 'bg-info text-dark'}`}>
-                            {c.agreement_type}
+                          <span className="badge bg-light text-dark border font-monospace fw-semibold" style={{ fontSize: '0.78rem' }}>
+                            {c.customer_ref || c.customer_id}
                           </span>
                         </td>
                         <td>
-                          <span className={`badge ${c.status === 'Active' ? 'bg-success' : 'bg-secondary'}`}>
+                          <div className="fw-semibold text-truncate" style={{ maxWidth: 220 }} title={c.customer_name}>{c.customer_name}</div>
+                          {c.unit_ref && <div className="text-muted" style={{ fontSize: '0.75rem' }}>{c.unit_ref}</div>}
+                        </td>
+                        <td>
+                          <div className="text-truncate small" style={{ maxWidth: 220 }} title={c.email}>
+                            <i className="bi bi-envelope text-muted me-1" />{c.email || '—'}
+                          </div>
+                          <div className="small text-muted"><i className="bi bi-telephone me-1" />{c.phone || '—'}</div>
+                        </td>
+                        <td className="text-end">{c.sqft ? parseInt(c.sqft, 10).toLocaleString('en-IN') : '—'}</td>
+                        <td className="text-nowrap">
+                          <span className="fw-semibold">F{c.floor_no || '—'}</span>
+                          <span className="text-muted mx-1">·</span>
+                          <span className="fw-semibold">U{c.unit_no || '—'}</span>
+                        </td>
+                        <td>
+                          <span className={`badge border ${c.agreement_type === 'Construction'
+                            ? 'bg-warning-subtle text-warning-emphasis border-warning-subtle'
+                            : 'bg-info-subtle text-info-emphasis border-info-subtle'}`}>
+                            {c.agreement_type || '—'}
+                          </span>
+                        </td>
+                        <td>
+                          <span className={`badge border ${c.status === 'Active'
+                            ? 'bg-success-subtle text-success border-success-subtle'
+                            : 'bg-secondary-subtle text-secondary border-secondary-subtle'}`}>
+                            <i className={`bi ${c.status === 'Active' ? 'bi-circle-fill' : 'bi-circle'} me-1`} style={{ fontSize: '0.5rem', verticalAlign: 'middle' }} />
                             {c.status}
                           </span>
                         </td>
-                        <td className="text-center">
-                          <div className="btn-group btn-group-sm">
+                        <td>
+                          {c.has_financial ? (
+                            <span className="badge bg-success-subtle text-success border border-success-subtle" title="Financial details saved">
+                              <i className="bi bi-check-circle me-1" />Filled
+                            </span>
+                          ) : (
                             <button
-                              className="btn btn-outline-primary"
+                              type="button"
+                              className="badge bg-danger-subtle text-danger border border-danger-subtle"
+                              style={{ cursor: 'pointer' }}
+                              title="Financial details not filled — click to fill now"
+                              onClick={() => navigate(`/financial?unit=${c.id}`)}
+                            >
+                              <i className="bi bi-exclamation-circle me-1" />Pending
+                            </button>
+                          )}
+                        </td>
+                        <td className="text-center">
+                          <div className="d-inline-flex gap-1">
+                            <button
+                              className="btn btn-sm btn-light border cl-icon-btn"
                               onClick={() => navigate(`/customers/edit/${c.id}`)}
                               title="Edit customer"
                             >
-                              <i className="bi bi-pencil"></i>
+                              <i className="bi bi-pencil text-primary"></i>
                             </button>
                             <button
-                              className="btn btn-outline-danger"
+                              className="btn btn-sm btn-light border cl-icon-btn"
                               onClick={() => openDeleteModal(c)}
                               title="Delete customer permanently"
                             >
-                              <i className="bi bi-trash3"></i>
+                              <i className="bi bi-trash3 text-danger"></i>
                             </button>
                           </div>
                         </td>
@@ -433,34 +560,16 @@ const CustomerList = () => {
                 </table>
               </div>
 
-              {/* Pagination */}
-              <div className="d-flex justify-content-between align-items-center p-3 border-top">
-                <div className="text-muted small">
-                  Showing {((pagination.page - 1) * pagination.limit) + 1}–{Math.min(pagination.page * pagination.limit, pagination.total)} of <strong>{pagination.total}</strong> customers
-                </div>
-                <nav>
-                  <ul className="pagination pagination-sm mb-0">
-                    <li className={`page-item ${pagination.page === 1 ? 'disabled' : ''}`}>
-                      <button className="page-link" onClick={() => setPagination((p) => ({ ...p, page: p.page - 1 }))}>
-                        <i className="bi bi-chevron-left"></i>
-                      </button>
-                    </li>
-                    {[...Array(Math.min(5, pagination.totalPages))].map((_, i) => {
-                      const pg = i + 1;
-                      return (
-                        <li key={pg} className={`page-item ${pagination.page === pg ? 'active' : ''}`}>
-                          <button className="page-link" onClick={() => setPagination((p) => ({ ...p, page: pg }))}>{pg}</button>
-                        </li>
-                      );
-                    })}
-                    <li className={`page-item ${pagination.page === pagination.totalPages ? 'disabled' : ''}`}>
-                      <button className="page-link" onClick={() => setPagination((p) => ({ ...p, page: p.page + 1 }))}>
-                        <i className="bi bi-chevron-right"></i>
-                      </button>
-                    </li>
-                  </ul>
-                </nav>
-              </div>
+              {/* Pagination — every page reachable (First/Last, sliding window, Go to page) */}
+              <Pagination
+                page={pagination.page}
+                totalPages={pagination.totalPages}
+                total={pagination.total}
+                limit={pagination.limit}
+                itemLabel="customers"
+                onPageChange={(p) => goToPage(p)}
+                onLimitChange={(l) => goToPage(1, l)}
+              />
             </>
           )}
         </div>

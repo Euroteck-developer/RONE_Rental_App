@@ -8,7 +8,7 @@ const TokenTimer = ({ onExpire }) => {
   const [remainingTime, setRemainingTime] = useState(0);
 
   useEffect(() => {
-    const token = localStorage.getItem("accessToken");
+    const token = sessionStorage.getItem("accessToken");
     if (!token) return;
 
     try {

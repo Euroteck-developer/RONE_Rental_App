@@ -82,8 +82,9 @@ const ForgotPassword = ({ onSuccess, onBack }) => {
     setLoading(true);
     try {
       const res = await api.post('/auth/forgot-password', { email: trimmedEmail });
-      // SUCCESS path — only runs if no error thrown
-      toast.success(res?.data?.message || 'OTP sent! Check your inbox.');
+      // SECURITY: the server answers identically whether or not the account
+      // exists, so we never tell the user "no account found".
+      toast.success(res?.data?.message || 'If an account exists for this email, an OTP has been sent. Please check your inbox.');
       setStep(2);
       startCountdown();
     } catch (err) {
@@ -93,8 +94,6 @@ const ForgotPassword = ({ onSuccess, onBack }) => {
 
       if (status === 429) {
         toast.error('Too many attempts. Please wait 10 minutes before trying again.');
-      } else if (status === 404) {
-        toast.error('No account found with this email address.');
       } else if (serverMsg) {
         toast.error(serverMsg);
       } else if (err.code === 'ECONNREFUSED' || err.code === 'ERR_NETWORK') {

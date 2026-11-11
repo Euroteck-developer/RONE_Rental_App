@@ -839,7 +839,7 @@
 //       cq += ` ORDER BY c.customer_name ASC, cu.id ASC`;
 
 //       const { rows: customers } = await client.query(cq, cp);
-//       if (!customers.length) throw new Error('No active customers found');
+//       if (!customers.length) throw userError('No active customers found for the selected month / agreement type.', 404);
 
 //       for (const cust of customers) {
 //         // Normalise field names
@@ -1468,7 +1468,7 @@
 //          WHERE id = ANY($1) AND status = 'Pending' AND deleted_at IS NULL`,
 //         [paymentIds]
 //       );
-//       if (!pmts.length) throw new Error('No valid pending payments found');
+//       if (!pmts.length) throw userError('No valid pending payments found.', 404);
 
 //       const tGross = round2(pmts.reduce((s, p) => s + toFloat(p.gross_amount), 0));
 //       const tTds   = round2(pmts.reduce((s, p) => s + toFloat(p.tds_amount),   0));
@@ -1860,6 +1860,7 @@
 'use strict';
 
 const { query, transaction } = require('../config/database');
+const { sendError, userError } = require('../utils/safeError');
 
 // ─── Math helpers ─────────────────────────────────────────────────────────────
 const toFloat      = (v, fb = 0) => { const n = parseFloat(v); return Number.isFinite(n) ? n : fb; };
@@ -1978,7 +1979,7 @@ const calcPartialInstallments = (raw) => {
   const list = parsed.entries;
   const tot  = list.reduce((s, i) => s + Number(i.percentage || 0), 0);
   if (Math.abs(tot - 100) > 0.01)
-    throw new Error(`Instalment percentages must sum to 100 (got ${tot})`);
+    throw userError(`Instalment percentages must sum to 100 (got ${tot})`, 400);
   return list.map((i, idx) => ({
     installment_no: i.installment_no || idx + 1,
     percentage:     Number(i.percentage),
@@ -2151,21 +2152,33 @@ const enrichPayment = (p, cust) => {
 };
 
 // ─── Shared SQL fragments ─────────────────────────────────────────────────────
+// Unit resolution for a payment row (read-only, never modifies data):
+//  • cu_direct — the unit the payment was saved against. Soft-deleted units are
+//    still joined so a payment always shows the flat it was actually made for.
+//  • cu_fb     — ONLY for legacy rows (customer_unit_id IS NULL) AND only when the
+//    customer owns exactly ONE live unit, so the attribution is unambiguous.
+//    Multi-unit customers' legacy rows stay unlinked (unit_unlinked = true)
+//    instead of being silently attributed to the newest flat.
 const UNIT_JOIN = `
   LEFT JOIN customer_units cu_direct
          ON cu_direct.id = p.customer_unit_id
-        AND cu_direct.deleted_at IS NULL
   LEFT JOIN LATERAL (
-    SELECT id, unit_no, floor_no, property_name,
+    SELECT id, unit_ref, unit_no, floor_no, property_name,
            bank_account_number, ifsc_code, bank_name, payout_splits
     FROM customer_units
     WHERE customer_id = c.id AND deleted_at IS NULL
-    ORDER BY created_at DESC
+      AND p.customer_unit_id IS NULL
+      AND (SELECT COUNT(*) FROM customer_units x
+            WHERE x.customer_id = c.id AND x.deleted_at IS NULL) = 1
     LIMIT 1
-  ) cu_fb ON (p.customer_unit_id IS NULL OR cu_direct.id IS NULL)
+  ) cu_fb ON TRUE
 `;
 
 const UNIT_COLS = `
+  COALESCE(cu_direct.id,                  cu_fb.id)                  AS resolved_unit_id,
+  (p.customer_unit_id IS NULL)                                       AS is_legacy,
+  (p.customer_unit_id IS NULL AND cu_fb.id IS NULL)                  AS unit_unlinked,
+  COALESCE(cu_direct.unit_ref,            cu_fb.unit_ref)            AS unit_ref,
   COALESCE(cu_direct.unit_no,             cu_fb.unit_no)             AS unit_no,
   COALESCE(cu_direct.floor_no,            cu_fb.floor_no)            AS floor_no,
   COALESCE(cu_direct.property_name,       cu_fb.property_name)       AS property_name,
@@ -2175,16 +2188,14 @@ const UNIT_COLS = `
   COALESCE(cu_direct.payout_splits,       cu_fb.payout_splits)       AS payout_splits
 `;
 
+// Must be placed AFTER ${UNIT_JOIN} (uses cu_fb).
 const FR_JOIN_FOR_PAYMENT = `
   LEFT JOIN LATERAL (
     SELECT rent, tds_applicable, rental_value_per_sft,
            total_sale_consideration, payment_closure_date, payment_mode
     FROM financial_records
     WHERE deleted_at IS NULL
-      AND customer_unit_id = CASE
-            WHEN p.customer_unit_id IS NOT NULL THEN p.customer_unit_id
-            ELSE cu_direct.id
-          END
+      AND customer_unit_id = COALESCE(p.customer_unit_id, cu_fb.id)
     ORDER BY created_at DESC
     LIMIT 1
   ) fr ON TRUE
@@ -2202,6 +2213,50 @@ const frJoinForUnit = `
     LIMIT 1
   ) fr ON TRUE
 `;
+
+// ─── Unit-aware duplicate detection (read-only) ───────────────────────────────
+// A payment "exists" for (unit, month) when:
+//   (a) a live row is saved against that exact unit, OR
+//   (b) a legacy row (customer_unit_id IS NULL) exists for the same customer+month
+//       AND the customer owns exactly ONE live unit (so that row can only belong
+//       to this unit). This blocks double payments caused by older saves that
+//       did not record the unit.
+// Legacy rows for MULTI-unit customers are ambiguous; they are reported via
+// findAmbiguousLegacyPayments() as warnings instead of blocking or being ignored.
+const SAME_UNIT_PAYMENT_COND = `
+  ( customer_unit_id = $1::uuid
+    OR ( customer_unit_id IS NULL
+         AND customer_id = $3::uuid
+         AND (SELECT COUNT(*) FROM customer_units x
+               WHERE x.customer_id = $3::uuid AND x.deleted_at IS NULL) = 1 ) )
+`;
+
+const DB = { query };
+
+const findExistingUnitPayment = async (db, { customerUnitId, rentMonth, customerId, onlyNonInstallment = false }) => {
+  const { rows } = await db.query(
+    `SELECT id, status, customer_unit_id FROM payments
+     WHERE ${SAME_UNIT_PAYMENT_COND}
+       AND payment_month = $2
+       AND status <> 'Cancelled' AND deleted_at IS NULL
+       ${onlyNonInstallment ? 'AND installment_no IS NULL' : ''}
+     ORDER BY created_at DESC`,
+    [customerUnitId, rentMonth, customerId]
+  );
+  return rows;
+};
+
+const findAmbiguousLegacyPayments = async (db, { customerId, rentMonth }) => {
+  const { rows } = await db.query(
+    `SELECT p.id, p.status, p.net_payout FROM payments p
+     WHERE p.customer_id = $1 AND p.customer_unit_id IS NULL
+       AND p.payment_month = $2 AND p.status <> 'Cancelled' AND p.deleted_at IS NULL
+       AND (SELECT COUNT(*) FROM customer_units x
+             WHERE x.customer_id = $1 AND x.deleted_at IS NULL) > 1`,
+    [customerId, rentMonth]
+  );
+  return rows;
+};
 
 // ─── INSERT helper ────────────────────────────────────────────────────────────
 const insertPayment = async (client, params) => {
@@ -2230,7 +2285,12 @@ const insertPayment = async (client, params) => {
        $16::jsonb, $17::uuid
      WHERE NOT EXISTS (
        SELECT 1 FROM payments
-       WHERE  customer_unit_id = $17::uuid
+       WHERE  ( customer_unit_id = $17::uuid
+                -- legacy row without unit for a single-unit customer = same flat
+                OR ( customer_unit_id IS NULL
+                     AND customer_id = $1::uuid
+                     AND (SELECT COUNT(*) FROM customer_units x
+                           WHERE x.customer_id = $1::uuid AND x.deleted_at IS NULL) = 1 ) )
          AND  payment_month    = $3::varchar
          AND  deleted_at      IS NULL
          AND  status          <> 'Cancelled'
@@ -2466,6 +2526,7 @@ const calculatePayment = async (req, res) => {
         `SELECT
            c.id AS id, c.customer_id, c.customer_name, c.email, c.phone,
            c.gst_no, c.cgst, c.sgst,
+           cu.id AS customer_unit_id, cu.unit_ref,
            cu.sqft, cu.floor_no, cu.unit_no,
            cu.agreement_type, cu.actual_occupancy_date, cu.status,
            COALESCE(cu.payout_splits, c.payout_splits)         AS payout_splits,
@@ -2522,7 +2583,7 @@ const calculatePayment = async (req, res) => {
 
   } catch (err) {
     console.error('calculatePayment error:', err);
-    res.status(500).json({ success: false, error: err.message || 'Failed to calculate payment' });
+    return sendError(res, err, 'Failed to calculate payment');
   }
 };
 
@@ -2547,18 +2608,18 @@ const _calcSingleUnit = async (cust, paymentDate, rentMonth) => {
   const cgstRate = hasGst ? (toFloat(cust.cgst) || 9) : 0;
   const sgstRate = hasGst ? (toFloat(cust.sgst) || 9) : 0;
 
-  const { rows: existingPayments } = await query(
-    `SELECT id, status FROM payments
-     WHERE customer_unit_id = $1 AND payment_month = $2
-       AND status <> 'Cancelled' AND deleted_at IS NULL`,
-    [cust.customer_unit_id, rentMonth]
-  );
-  if (existingPayments.length)
-    return {
-      error: `Payment for ${cust.customer_name} (Unit ${cust.unit_no}) for ${toMonthLabel(rentMonth)} already exists (status: ${existingPayments[0].status}).`,
-      code:  'PAYMENT_ALREADY_EXISTS',
-      meta:  { rentMonth, customerName: cust.customer_name, unitNo: cust.unit_no, existingStatus: existingPayments[0].status },
-    };
+  if (!cust.customer_unit_id)
+    return { error: 'Unit could not be resolved for this customer. Please select a unit.', code: 'UNIT_REQUIRED' };
+
+  const existingPayments = await findExistingUnitPayment(DB, {
+    customerUnitId: cust.customer_unit_id, rentMonth, customerId: cust.id,
+  });
+  // An existing payment does NOT block the calculation: users open the calculator
+  // to check how much rent was generated. We flag it instead; saving a second
+  // payment stays blocked by save-with-adjustment / generate duplicate guards.
+  const existing        = existingPayments[0] || null;
+  const alreadyExists   = !!existing;
+  const existingPayment = existing ? { id: existing.id, status: existing.status } : null;
 
   const effectiveStartDate = getEffectiveStartDate(cust);
   const startMonthKey      = toMonthKey(effectiveStartDate);
@@ -2572,10 +2633,18 @@ const _calcSingleUnit = async (cust, paymentDate, rentMonth) => {
   const { rows: [pr] } = await query(
     `SELECT COALESCE(SUM(gross_amount), 0) AS total_paid
      FROM payments
-     WHERE customer_unit_id = $1 AND deleted_at IS NULL AND status <> 'Cancelled'`,
-    [cust.customer_unit_id]
+     WHERE ${SAME_UNIT_PAYMENT_COND}
+       AND deleted_at IS NULL AND status <> 'Cancelled'
+       AND $2::text IS NOT NULL  -- $2 unused by the cond; referenced so pg can type it`,
+    [cust.customer_unit_id, rentMonth, cust.id]
   );
   const totalAlreadyPaid = toFloat(pr.total_paid);
+
+  // Legacy rows (no unit) for multi-unit customers in this month → warn, never hide.
+  const ambiguousLegacy = await findAmbiguousLegacyPayments(DB, { customerId: cust.id, rentMonth });
+  const legacyWarning = ambiguousLegacy.length
+    ? `${ambiguousLegacy.length} older payment(s) for ${toMonthLabel(rentMonth)} were saved without a unit for this customer. Please verify in Payment History before saving to avoid paying twice.`
+    : null;
   const remainingBalance = Math.max(0, totalSale - totalAlreadyPaid);
 
   const buildGstDetails = (netAmount) => {
@@ -2634,7 +2703,7 @@ const _calcSingleUnit = async (cust, paymentDate, rentMonth) => {
       return {
         data: {
           dbCustomerId: cust.id, customerId: cust.customer_id, customerName: cust.customer_name,
-          customerUnitId: cust.customer_unit_id, unitNo: cust.unit_no, floorNo: cust.floor_no,
+          customerUnitId: cust.customer_unit_id, unitRef: cust.unit_ref || null, unitNo: cust.unit_no, floorNo: cust.floor_no, legacyWarning, alreadyExists, existingPayment,
           agreementType: cust.agreement_type, tdsApplicable: cust.tds_applicable, tdsExempt,
           actualOccupancyDate: cust.actual_occupancy_date, paymentClosureDate: cust.payment_closure_date || null,
           paymentDate, rentMonth, paymentMonth: rentMonth,
@@ -2668,7 +2737,7 @@ const _calcSingleUnit = async (cust, paymentDate, rentMonth) => {
   return {
     data: {
       dbCustomerId: cust.id, customerId: cust.customer_id, customerName: cust.customer_name,
-      customerUnitId: cust.customer_unit_id, unitNo: cust.unit_no, floorNo: cust.floor_no,
+      customerUnitId: cust.customer_unit_id, unitRef: cust.unit_ref || null, unitNo: cust.unit_no, floorNo: cust.floor_no, legacyWarning, alreadyExists, existingPayment,
       agreementType: cust.agreement_type, tdsApplicable: cust.tds_applicable, tdsExempt,
       actualOccupancyDate: cust.actual_occupancy_date, paymentClosureDate: cust.payment_closure_date || null,
       paymentDate, rentMonth, paymentMonth: rentMonth,
@@ -2706,7 +2775,8 @@ const generateMonthlyPayments = async (req, res) => {
     const rentMonth  = `${rmDate.getFullYear()}-${String(rmDate.getMonth() + 1).padStart(2, '0')}`;
     const scheduled0 = `${month}-01`;
 
-    const payments = [], skipped = [], duplicates = [];
+    const payments = [], skipped = [], duplicates = [], warnings = [];
+    const warnedCustomers = new Set();
 
     await transaction(async (client) => {
       let cq = `
@@ -2735,7 +2805,7 @@ const generateMonthlyPayments = async (req, res) => {
       cq += ` ORDER BY c.customer_name ASC, cu.id ASC`;
 
       const { rows: customers } = await client.query(cq, cp);
-      if (!customers.length) throw new Error('No active customers found');
+      if (!customers.length) throw userError('No active customers found for the selected month / agreement type.', 404);
 
       for (const cust of customers) {
         cust.sqft                  = toFloat(cust.cu_sqft);
@@ -2770,16 +2840,30 @@ const generateMonthlyPayments = async (req, res) => {
 
         // ── Duplicate guard (full mode only — partial uses per-row insertPayment guard) ──
         if (payMode !== 'partial') {
-          const { rows: dup } = await client.query(
-            `SELECT id FROM payments
-             WHERE customer_unit_id = $1 AND payment_month = $2
-               AND installment_no IS NULL AND status <> 'Cancelled' AND deleted_at IS NULL`,
-            [cuId, rentMonth]
-          );
+          const dup = await findExistingUnitPayment(client, {
+            customerUnitId: cuId, rentMonth, customerId: cust.id, onlyNonInstallment: true,
+          });
           if (dup.length) {
-            duplicates.push({ customerId: cust.id, customerName: cust.customer_name, unitId: cuId, unitNo: cust.unit_no, reason: `Payment already exists for ${toMonthLabel(rentMonth)}` });
+            duplicates.push({
+              customerId: cust.id, customerName: cust.customer_name, unitId: cuId, unitNo: cust.unit_no,
+              reason: dup[0].customer_unit_id
+                ? `Payment already exists for ${toMonthLabel(rentMonth)}`
+                : `Payment already exists for ${toMonthLabel(rentMonth)} (older record saved without unit)`,
+            });
             continue;
           }
+        }
+
+        // Older payments saved without a unit for a multi-unit customer cannot be
+        // attributed automatically → surface them so nobody pays twice unnoticed.
+        if (!warnedCustomers.has(cust.id)) {
+          warnedCustomers.add(cust.id);
+          const amb = await findAmbiguousLegacyPayments(client, { customerId: cust.id, rentMonth });
+          if (amb.length) warnings.push({
+            customerId: cust.id, customerName: cust.customer_name,
+            legacyPaymentIds: amb.map((r) => r.id),
+            reason: `${amb.length} older payment(s) for ${toMonthLabel(rentMonth)} have no unit linked. Verify in Payment History; cancel via the app if they duplicate the newly generated rows.`,
+          });
         }
 
         // ── PARTIAL mode ─────────────────────────────────────────────────────
@@ -2809,12 +2893,13 @@ const generateMonthlyPayments = async (req, res) => {
           payoutSplitsJson: splitsJson, customerUnitId: cuId,
         });
         if (p) payments.push(enrichPayment(p, cust));
+        else duplicates.push({ customerId: cust.id, customerName: cust.customer_name, unitId: cuId, unitNo: cust.unit_no, reason: `Payment already exists for ${toMonthLabel(rentMonth)}` });
       }
 
       await client.query(
         `INSERT INTO audit_logs (user_id, action, resource_type, resource_id, changes, ip_address, user_agent, status)
          VALUES ($1,'MONTHLY_PAYMENTS_GENERATED','PAYMENT',NULL,$2,$3,$4,'SUCCESS')`,
-        [userId, JSON.stringify({ initiationMonth: month, rentMonth, generated: payments.length, skipped: skipped.length, duplicates: duplicates.length, agreementType: agreementType || 'All' }), req.ip || '0.0.0.0', req.headers['user-agent'] || 'system']
+        [userId, JSON.stringify({ initiationMonth: month, rentMonth, generated: payments.length, skipped: skipped.length, duplicates: duplicates.length, warnings: warnings.length, agreementType: agreementType || 'All' }), req.ip || '0.0.0.0', req.headers['user-agent'] || 'system']
       );
     });
 
@@ -2825,12 +2910,13 @@ const generateMonthlyPayments = async (req, res) => {
         initiationMonth: month, rentMonth,
         rentMonthDisplay: toMonthLabel(rentMonth), initiationMonthDisplay: toMonthLabel(month),
         paymentsGenerated: payments.length, skippedCount: skipped.length, duplicateCount: duplicates.length,
-        payments, skipped, duplicates,
+        warningCount: warnings.length,
+        payments, skipped, duplicates, warnings,
       },
     });
   } catch (err) {
     console.error('generateMonthlyPayments error:', err);
-    res.status(500).json({ success: false, error: err.message || 'Failed to generate monthly payments' });
+    return sendError(res, err, 'Failed to generate monthly payments');
   }
 };
 
@@ -2907,12 +2993,9 @@ const createPaymentSchedule = async (req, res) => {
           if (startMonthKey && rentMonth < startMonthKey) { skip(`Payment starts ${toMonthLabel(startMonthKey)}`); continue; }
 
           if (payMode !== 'partial') {
-            const { rows: dup } = await client.query(
-              `SELECT id FROM payments
-               WHERE customer_unit_id = $1 AND payment_month = $2
-                 AND installment_no IS NULL AND status <> 'Cancelled' AND deleted_at IS NULL`,
-              [cuId, rentMonth]
-            );
+            const dup = await findExistingUnitPayment(client, {
+              customerUnitId: cuId, rentMonth, customerId: cust.id, onlyNonInstallment: true,
+            });
             if (dup.length) { skip(`Payment already exists for ${toMonthLabel(rentMonth)}`); continue; }
           }
 
@@ -2939,6 +3022,7 @@ const createPaymentSchedule = async (req, res) => {
             payoutSplitsJson: splitsJson, customerUnitId: cuId,
           });
           if (p) payments.push(enrichPayment(p, cust));
+          else skip(`Payment already exists for ${toMonthLabel(rentMonth)}`);
         }
       }
 
@@ -3077,7 +3161,7 @@ const completePayment = async (req, res) => {
     res.json({ success: true, message: 'Payment completed successfully', data: rows[0] });
   } catch (err) {
     console.error('completePayment error:', err);
-    res.status(500).json({ success: false, error: err.message || 'Failed to complete payment' });
+    return sendError(res, err, 'Failed to complete payment');
   }
 };
 
@@ -3095,7 +3179,7 @@ const initiatePaymentBatch = async (req, res) => {
         `SELECT * FROM payments WHERE id = ANY($1) AND status = 'Pending' AND deleted_at IS NULL`,
         [paymentIds]
       );
-      if (!pmts.length) throw new Error('No valid pending payments found');
+      if (!pmts.length) throw userError('No valid pending payments found.', 404);
 
       const tGross = round2(pmts.reduce((s, p) => s + toFloat(p.gross_amount), 0));
       const tTds   = round2(pmts.reduce((s, p) => s + toFloat(p.tds_amount),   0));
@@ -3133,18 +3217,47 @@ const initiatePaymentBatch = async (req, res) => {
     res.status(201).json({ success: true, message: 'Payment batch initiated', data: batch });
   } catch (err) {
     console.error('initiatePaymentBatch error:', err);
-    res.status(500).json({ success: false, error: err.message || 'Failed to initiate batch' });
+    return sendError(res, err, 'Failed to initiate batch');
   }
 };
 
 // ─── getPaymentHistory ────────────────────────────────────────────────────────
+// Shared, parameterised filter builder used by history AND report-totals so the
+// Excel data and the server-side reconciliation totals always use identical rules.
+const buildPaymentFilters = (q) => {
+  const {
+    customerId, customerUnitId, status, startDate, endDate, month,
+    monthFrom, monthTo, agreementType, excludeCancelled,
+  } = q;
+  const where  = ['p.deleted_at IS NULL'];
+  const params = [];
+  const add = (sql, val) => { params.push(val); where.push(sql.replace('?', `$${params.length}`)); };
+  const isMonth = (v) => /^\d{4}-\d{2}$/.test(String(v || ''));
+  const isDate  = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+
+  if (customerId)     add('p.customer_id = ?', customerId);
+  if (customerUnitId) add('COALESCE(p.customer_unit_id, cu_fb.id) = ?::uuid', customerUnitId);
+  if (status)         add('p.status = ?', status);
+  if (String(excludeCancelled) === 'true') where.push(`p.status <> 'Cancelled'`);
+  if (isDate(startDate))  add('p.payment_date >= ?::date', startDate);
+  // "< end + 1 day" so the whole last day is included even if payment_date is a timestamp
+  if (isDate(endDate))    add(`p.payment_date < (?::date + INTERVAL '1 day')`, endDate);
+  if (isMonth(month))     add('p.payment_month = ?', month);
+  if (isMonth(monthFrom)) add('p.payment_month >= ?', monthFrom);
+  if (isMonth(monthTo))   add('p.payment_month <= ?', monthTo);
+  if (agreementType)      add('COALESCE(cu_direct.agreement_type, c.agreement_type) = ?', agreementType);
+  return { whereSql: where.join(' AND '), params };
+};
+
 const getPaymentHistory = async (req, res) => {
   try {
-    const { page = 1, limit = 10, customerId, status, startDate, endDate, month, agreementType } = req.query;
-    const limitNum = Math.min(5000, Math.max(1, parseInt(limit) || 10));
-    const offset   = (Math.max(1, parseInt(page) || 1) - 1) * limitNum;
+    const { page = 1, limit = 10 } = req.query;
+    const limitNum = Math.min(5000, Math.max(1, parseInt(limit, 10) || 10));
+    const pageNum  = Math.max(1, parseInt(page, 10) || 1);
+    const offset   = (pageNum - 1) * limitNum;
+    const { whereSql, params } = buildPaymentFilters(req.query);
 
-    let queryText = `
+    const queryText = `
       SELECT
         p.*,
         p.payout_splits                  AS payment_payout_splits,
@@ -3162,49 +3275,63 @@ const getPaymentHistory = async (req, res) => {
       JOIN customers c ON p.customer_id = c.id
       ${UNIT_JOIN}
       ${FR_JOIN_FOR_PAYMENT}
-      WHERE p.deleted_at IS NULL
+      WHERE ${whereSql}
+      ORDER BY p.payment_date DESC, p.created_at DESC, p.id DESC
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
     `;
-    const queryParams = []; let pi = 1;
+    const result = await query(queryText, [...params, limitNum, offset]);
 
-    if (customerId)    { queryText += ` AND p.customer_id = $${pi}`;   queryParams.push(customerId);  pi++; }
-    if (status)        { queryText += ` AND p.status = $${pi}`;        queryParams.push(status);      pi++; }
-    if (startDate)     { queryText += ` AND p.payment_date >= $${pi}`; queryParams.push(startDate);   pi++; }
-    if (endDate)       { queryText += ` AND p.payment_date <= $${pi}`; queryParams.push(endDate);     pi++; }
-    if (month)         { queryText += ` AND p.payment_month = $${pi}`; queryParams.push(month);       pi++; }
-    if (agreementType) { queryText += ` AND COALESCE(cu_direct.agreement_type, c.agreement_type) = $${pi}`; queryParams.push(agreementType); pi++; }
-
-    queryText += ` ORDER BY p.payment_date DESC, p.created_at DESC LIMIT $${pi} OFFSET $${pi + 1}`;
-    queryParams.push(limitNum, offset);
-
-    const result = await query(queryText, queryParams);
-
-    let countQuery = `
-      SELECT COUNT(*) FROM payments p
-      JOIN customers c ON p.customer_id = c.id
-      ${UNIT_JOIN}
-      WHERE p.deleted_at IS NULL
-    `;
-    const countParams = []; let cp = 1;
-    if (customerId)    { countQuery += ` AND p.customer_id=$${cp}`;   countParams.push(customerId);  cp++; }
-    if (status)        { countQuery += ` AND p.status=$${cp}`;        countParams.push(status);      cp++; }
-    if (startDate)     { countQuery += ` AND p.payment_date>=$${cp}`; countParams.push(startDate);   cp++; }
-    if (endDate)       { countQuery += ` AND p.payment_date<=$${cp}`; countParams.push(endDate);     cp++; }
-    if (month)         { countQuery += ` AND p.payment_month=$${cp}`; countParams.push(month);       cp++; }
-    if (agreementType) { countQuery += ` AND COALESCE(cu_direct.agreement_type, c.agreement_type)=$${cp}`; countParams.push(agreementType); cp++; }
-
-    const countResult = await query(countQuery, countParams);
-    const total = parseInt(countResult.rows[0].count);
+    const countResult = await query(
+      `SELECT COUNT(*) FROM payments p
+       JOIN customers c ON p.customer_id = c.id
+       ${UNIT_JOIN}
+       WHERE ${whereSql}`,
+      params
+    );
+    const total = parseInt(countResult.rows[0].count, 10);
 
     res.json({
       success: true,
       data: {
         payments: result.rows,
-        pagination: { page: parseInt(page), limit: limitNum, total, totalPages: Math.ceil(total / limitNum) },
+        pagination: { page: pageNum, limit: limitNum, total, totalPages: Math.ceil(total / limitNum) },
       },
     });
   } catch (error) {
     console.error('getPaymentHistory error:', error);
     res.status(500).json({ success: false, error: 'Failed to fetch payment history' });
+  }
+};
+
+// ─── getReportTotals (read-only reconciliation) ───────────────────────────────
+// Same filters as getPaymentHistory; returns COUNT/SUM straight from SQL so the
+// frontend can verify Excel totals before allowing the download.
+const getReportTotals = async (req, res) => {
+  try {
+    const { whereSql, params } = buildPaymentFilters(req.query);
+    const { rows: [t] } = await query(
+      `SELECT COUNT(*)::int                    AS row_count,
+              COALESCE(SUM(p.gross_amount), 0) AS total_gross,
+              COALESCE(SUM(p.tds_amount), 0)   AS total_tds,
+              COALESCE(SUM(p.net_payout), 0)   AS total_net
+       FROM payments p
+       JOIN customers c ON p.customer_id = c.id
+       ${UNIT_JOIN}
+       WHERE ${whereSql}`,
+      params
+    );
+    res.json({
+      success: true,
+      data: {
+        rowCount:   t.row_count,
+        totalGross: round2(toFloat(t.total_gross)),
+        totalTds:   round2(toFloat(t.total_tds)),
+        totalNet:   round2(toFloat(t.total_net)),
+      },
+    });
+  } catch (error) {
+    console.error('getReportTotals error:', error);
+    res.status(500).json({ success: false, error: 'Failed to compute report totals' });
   }
 };
 
@@ -3263,36 +3390,33 @@ const savePaymentWithAdjustment = async (req, res) => {
       return res.status(400).json({ success: false, error: 'customerId, paymentDate, and rentMonth are required' });
     if (adjustedNetPayout == null || adjustedNetPayout <= 0)
       return res.status(400).json({ success: false, error: 'adjustedNetPayout must be a positive number' });
+    if (!/^\d{4}-\d{2}$/.test(String(rentMonth)))
+      return res.status(400).json({ success: false, error: 'rentMonth must be in YYYY-MM format' });
 
-    const dupCheck = customerUnitId
-      ? await query(
-          `SELECT id, status FROM payments
-           WHERE customer_unit_id = $1 AND payment_month = $2
-             AND status <> 'Cancelled' AND deleted_at IS NULL`,
-          [customerUnitId, rentMonth]
-        )
-      : await query(
-          `SELECT id, status FROM payments
-           WHERE customer_id = $1 AND customer_unit_id IS NULL AND payment_month = $2
-             AND status <> 'Cancelled' AND deleted_at IS NULL`,
-          [customerId, rentMonth]
-        );
+    // Every payment MUST be tied to a unit (flat). Saving without a unit was the
+    // root cause of duplicate payments and wrong unit numbers in reports.
+    if (!customerUnitId)
+      return res.status(400).json({ success: false, error: 'Please select the unit (flat) for this payment.', code: 'UNIT_REQUIRED' });
 
-    if (dupCheck.rows.length)
+    const { rows: unitRows } = await query(
+      `SELECT cu.id, cu.agreement_type, c.customer_name, c.agreement_type AS customer_agreement_type
+       FROM customer_units cu
+       JOIN customers c ON c.id = cu.customer_id AND c.deleted_at IS NULL
+       WHERE cu.id = $1 AND cu.customer_id = $2 AND cu.deleted_at IS NULL`,
+      [customerUnitId, customerId]
+    );
+    if (!unitRows.length)
+      return res.status(404).json({ success: false, error: 'Unit not found for this customer.' });
+
+    const dupRows = await findExistingUnitPayment(DB, { customerUnitId, rentMonth, customerId });
+    if (dupRows.length)
       return res.status(409).json({
         success: false,
-        error: `A payment for ${rentMonth} already exists with status "${dupCheck.rows[0].status}". Cancel it first.`,
-        code: 'PAYMENT_ALREADY_EXISTS', existingId: dupCheck.rows[0].id,
+        error: `A payment for ${toMonthLabel(rentMonth)} already exists for this unit with status "${dupRows[0].status}". Cancel it first.`,
+        code: 'PAYMENT_ALREADY_EXISTS', existingId: dupRows[0].id,
       });
 
-    const { rows: custRows } = await query(
-      `SELECT customer_name, agreement_type FROM customers WHERE id=$1 AND deleted_at IS NULL`,
-      [customerId]
-    );
-    if (!custRows.length)
-      return res.status(404).json({ success: false, error: 'Customer not found' });
-
-    const period      = custRows[0].agreement_type;
+    const period      = unitRows[0].agreement_type || unitRows[0].customer_agreement_type;
     const splitsJson  = payoutSplits ? JSON.stringify(payoutSplits) : null;
     const adj         = round2(adjustmentAmount);
     const adjNet      = round2(adjustedNetPayout);
@@ -3311,7 +3435,7 @@ const savePaymentWithAdjustment = async (req, res) => {
        )
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,0,$10,'Pending',$11,$12,$13,$14,$15::jsonb)
        RETURNING *`,
-      [customerId, customerUnitId || null, paymentDate, rentMonth, round2(grossAmount), round2(tdsAmount), adjNet, period, round2(grossAmount), paymentDate, userId, adj, adjNet, noteWithAdj, splitsJson]
+      [customerId, customerUnitId, paymentDate, rentMonth, round2(grossAmount), round2(tdsAmount), adjNet, period, round2(grossAmount), paymentDate, userId, adj, adjNet, noteWithAdj, splitsJson]
     );
 
     await query(
@@ -3338,12 +3462,19 @@ const getPaymentByMonth = async (req, res) => {
     if ((!customerId && !customerUnitId) || !rentMonth)
       return res.status(400).json({ success: false, error: 'customerId (or customerUnitId) and rentMonth are required' });
 
+    // Unit lookup also finds a legacy (unit-less) row when the customer owns
+    // exactly one unit. Live (non-cancelled) rows are preferred over cancelled.
     const { rows } = customerUnitId
       ? await query(
           `SELECT p.*, c.customer_name, c.agreement_type
            FROM payments p JOIN customers c ON c.id = p.customer_id
-           WHERE p.customer_unit_id = $1 AND p.payment_month = $2 AND p.deleted_at IS NULL
-           ORDER BY p.created_at DESC LIMIT 1`,
+           WHERE (p.customer_unit_id = $1::uuid
+                  OR (p.customer_unit_id IS NULL
+                      AND p.customer_id = (SELECT customer_id FROM customer_units WHERE id = $1::uuid)
+                      AND (SELECT COUNT(*) FROM customer_units x
+                            WHERE x.customer_id = p.customer_id AND x.deleted_at IS NULL) = 1))
+             AND p.payment_month = $2 AND p.deleted_at IS NULL
+           ORDER BY (p.status = 'Cancelled') ASC, p.created_at DESC LIMIT 1`,
           [customerUnitId, rentMonth]
         )
       : await query(
@@ -3402,6 +3533,7 @@ module.exports = {
   initiatePaymentBatch,
   completePayment,
   getPaymentHistory,
+  getReportTotals,
   getPaymentStats,
   resetOrderCreated,
   splitPayoutForPayment,

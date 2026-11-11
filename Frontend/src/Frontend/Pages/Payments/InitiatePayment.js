@@ -2666,6 +2666,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import paymentService from '../../Services/payment.service';
 import { formatCurrency } from '../../Utils/helpers';
+import Pagination from '../../Components/Pagination';
 import '../../Styles/InitiatePayment.css';
 
 // ─── Math helpers ─────────────────────────────────────────────────────────────
@@ -2944,6 +2945,8 @@ const InitiatePayment = () => {
   const [expandedKeys,  setExpandedKeys]  = useState(new Set());
   const [splitModal,    setSplitModal]    = useState(null);
   const [selectedMonth, setSelectedMonth] = useState('');
+  const [page,          setPage]          = useState(1);
+  const [pageSize,      setPageSize]      = useState(10);
 
   useEffect(() => { fetchPending(); }, []);
 
@@ -3014,9 +3017,13 @@ const InitiatePayment = () => {
     const map = new Map();
 
     for (const p of filtered) {
-      const unitKey = p.customer_unit_id
-        ? `uid_${p.customer_unit_id}`
-        : `leg_${p.customer_id}`;
+      // Rows without a unit are grouped with their unit only when the server could
+      // resolve it unambiguously (single-flat customer); otherwise each stays on
+      // its own line so different flats' amounts are never merged together.
+      const resolvedUnit = p.customer_unit_id || p.resolved_unit_id;
+      const unitKey = resolvedUnit
+        ? `uid_${resolvedUnit}`
+        : `leg_pay_${p.id}`;
 
       const key = `${unitKey}__${p.payment_month}`;
 
@@ -3088,6 +3095,23 @@ const InitiatePayment = () => {
   const toggleGroup = useCallback((key, checked) =>
     setSelectedKeys((prev) => checked ? [...prev, key] : prev.filter((k) => k !== key)),
   []);
+
+  // ── Pagination (client-side; selection is kept across pages) ─────────────
+  const totalPages  = Math.max(1, Math.ceil(groups.length / pageSize));
+  const safePage    = Math.min(page, totalPages);
+  const pagedGroups = useMemo(
+    () => groups.slice((safePage - 1) * pageSize, safePage * pageSize),
+    [groups, safePage, pageSize]
+  );
+  useEffect(() => { setPage(1); }, [selectedMonth, payments]);
+  useEffect(() => { if (page > totalPages) setPage(totalPages); }, [page, totalPages]);
+
+  const pageKeys         = pagedGroups.map((g) => g.key);
+  const pageSelectedCnt  = pageKeys.filter((k) => selectedKeys.includes(k)).length;
+  const togglePage = (checked) =>
+    setSelectedKeys((prev) => checked
+      ? Array.from(new Set([...prev, ...pageKeys]))
+      : prev.filter((k) => !pageKeys.includes(k)));
 
   const selectedGroups = groups.filter((g) => selectedKeys.includes(g.key));
   const selGross       = round2(selectedGroups.reduce((s, g) => s + g.gross,       0));
@@ -3220,9 +3244,16 @@ const InitiatePayment = () => {
                       </>
                     )}
                   </span>
-                  <button className="btn btn-sm btn-outline-primary" onClick={() => setSelectedKeys([])}>
-                    Clear
-                  </button>
+                  <div className="d-flex gap-2">
+                    {selectedKeys.length < groups.length && (
+                      <button className="btn btn-sm btn-primary" onClick={() => toggleAll(true)}>
+                        Select all {groups.length} payments
+                      </button>
+                    )}
+                    <button className="btn btn-sm btn-outline-primary" onClick={() => setSelectedKeys([])}>
+                      Clear
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -3252,7 +3283,8 @@ const InitiatePayment = () => {
               {/* ── Count badge ── */}
               <div className="d-flex align-items-center justify-content-between mb-2">
                 <span className="text-muted small">
-                  Showing <strong>{groups.length}</strong> payment{groups.length !== 1 ? 's' : ''}
+                  Showing <strong>{(safePage - 1) * pageSize + 1}–{Math.min(safePage * pageSize, groups.length)}</strong> of{' '}
+                  <strong>{groups.length}</strong> payment{groups.length !== 1 ? 's' : ''}
                   {selectedMonth ? ` for ${formatMonthLabel(selectedMonth)}` : ' (all months)'}
                 </span>
               </div>
@@ -3266,11 +3298,12 @@ const InitiatePayment = () => {
                         <input
                           type="checkbox"
                           className="form-check-input"
-                          checked={selectedKeys.length === groups.length && groups.length > 0}
+                          title="Select / clear this page"
+                          checked={pageKeys.length > 0 && pageSelectedCnt === pageKeys.length}
                           ref={(el) => {
-                            if (el) el.indeterminate = selectedKeys.length > 0 && selectedKeys.length < groups.length;
+                            if (el) el.indeterminate = pageSelectedCnt > 0 && pageSelectedCnt < pageKeys.length;
                           }}
-                          onChange={(e) => toggleAll(e.target.checked)}
+                          onChange={(e) => togglePage(e.target.checked)}
                         />
                       </th>
                       <th>Customer</th>
@@ -3289,7 +3322,7 @@ const InitiatePayment = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {groups.map((g) => {
+                    {pagedGroups.map((g) => {
                       const isSelected = selectedKeys.includes(g.key);
                       const isExpanded = expandedKeys.has(g.key);
                       const hasMulti   = g.splitEntries && g.splitEntries.length > 1;
@@ -3559,6 +3592,16 @@ const InitiatePayment = () => {
                   </tbody>
                 </table>
               </div>
+
+              <Pagination
+                page={safePage}
+                totalPages={totalPages}
+                total={groups.length}
+                limit={pageSize}
+                itemLabel="payments"
+                onPageChange={setPage}
+                onLimitChange={(l) => { setPageSize(l); setPage(1); }}
+              />
 
               {/* ── Footer ── */}
               <div className="initiate-footer">

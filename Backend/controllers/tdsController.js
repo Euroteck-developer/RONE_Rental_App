@@ -982,18 +982,30 @@ const LATEST_FR = `
 //     (if available) or by matching customer_id + falling back to the most
 //     recent active unit for that customer.
 // ─────────────────────────────────────────────────────────────────────────────
+// Unit resolution: the payment's own unit; for legacy rows (no unit) only when the
+// customer owns exactly ONE live unit — never guess the "newest" flat.
 const UNIT_JOIN = `
   LEFT JOIN LATERAL (
-    SELECT cu.unit_no, cu.floor_no
+    SELECT cu.id, cu.unit_no, cu.floor_no
     FROM customer_units cu
-    WHERE cu.deleted_at IS NULL
-      AND (
+    WHERE (
         cu.id = p.customer_unit_id
-        OR (p.customer_unit_id IS NULL AND cu.customer_id = c.id)
+        OR (p.customer_unit_id IS NULL AND cu.customer_id = c.id AND cu.deleted_at IS NULL
+            AND (SELECT COUNT(*) FROM customer_units x
+                  WHERE x.customer_id = c.id AND x.deleted_at IS NULL) = 1)
       )
-    ORDER BY (cu.id = p.customer_unit_id) DESC, cu.created_at DESC
     LIMIT 1
   ) cu ON TRUE
+`;
+
+// Financial record of the payment's unit (must follow ${UNIT_JOIN}).
+const UNIT_FR_JOIN = `
+  LEFT JOIN LATERAL (
+    SELECT rent, tds_applicable, rental_value_per_sft
+    FROM financial_records
+    WHERE deleted_at IS NULL AND customer_unit_id = cu.id
+    ORDER BY created_at DESC LIMIT 1
+  ) fr ON TRUE
 `;
 
 const GST_COLS = `
@@ -1011,27 +1023,35 @@ const GST_COLS = `
        ELSE ROUND(p.net_payout::numeric, 2) END                   AS total_payable
 `;
 
+// Sibling installments are matched on the SAME UNIT (not just same customer),
+// and cancelled payments are never part of TDS reporting.
 const ALL_INST_WHERE_P = `
-  (
+  p.status <> 'Cancelled'
+  AND (
     p.tds_amount > 0
     OR EXISTS (
       SELECT 1 FROM payments p2
       WHERE p2.customer_id   = p.customer_id
+        AND p2.customer_unit_id IS NOT DISTINCT FROM p.customer_unit_id
         AND p2.payment_month = p.payment_month
         AND p2.tds_amount    > 0
+        AND p2.status       <> 'Cancelled'
         AND p2.deleted_at    IS NULL
     )
   )
 `;
 
 const ALL_INST_WHERE_BARE = `
-  (
+  status <> 'Cancelled'
+  AND (
     tds_amount > 0
     OR EXISTS (
       SELECT 1 FROM payments p2
       WHERE p2.customer_id   = payments.customer_id
+        AND p2.customer_unit_id IS NOT DISTINCT FROM payments.customer_unit_id
         AND p2.payment_month = payments.payment_month
         AND p2.tds_amount    > 0
+        AND p2.status       <> 'Cancelled'
         AND p2.deleted_at    IS NULL
     )
   )
@@ -1081,7 +1101,7 @@ const getAllTDS = async (req, res) => {
       FROM payments p
       JOIN customers c ON p.customer_id = c.id AND c.deleted_at IS NULL
       ${UNIT_JOIN}
-      LEFT JOIN ${LATEST_FR} fr ON c.id = fr.customer_id
+      ${UNIT_FR_JOIN}
       WHERE p.deleted_at IS NULL
         AND ${ALL_INST_WHERE_P}
     `;
@@ -1187,7 +1207,7 @@ const getMonthlyTDS = async (req, res) => {
        FROM payments p
        JOIN customers c ON p.customer_id = c.id AND c.deleted_at IS NULL
        ${UNIT_JOIN}
-       LEFT JOIN ${LATEST_FR} fr ON c.id = fr.customer_id
+       ${UNIT_FR_JOIN}
        WHERE p.deleted_at IS NULL
          AND p.payment_month = $1
          AND ${ALL_INST_WHERE_P}
@@ -1270,38 +1290,16 @@ const getQuarterlyTDS = async (req, res) => {
         ${gstSumCols('p')}
        FROM customers c
        JOIN payments p ON c.id = p.customer_id AND p.deleted_at IS NULL
-       -- Resolve unit_no: prefer unit linked to first matching payment, else latest active unit
+       -- TDS is per deductee (PAN) so totals stay per customer, but list EVERY
+       -- unit paid in the period instead of one arbitrary unit.
        LEFT JOIN LATERAL (
-         SELECT cu.unit_no
-         FROM customer_units cu
-         WHERE cu.deleted_at IS NULL
-           AND (
-             cu.id = (
-               SELECT p2.customer_unit_id FROM payments p2
-               WHERE p2.customer_id = c.id
-                 AND p2.payment_month = ANY($1)
-                 AND p2.deleted_at IS NULL
-               LIMIT 1
-             )
-             OR (
-               NOT EXISTS (
-                 SELECT 1 FROM payments p3
-                 WHERE p3.customer_id = c.id
-                   AND p3.customer_unit_id IS NOT NULL
-                   AND p3.payment_month = ANY($1)
-                   AND p3.deleted_at IS NULL
-               )
-               AND cu.customer_id = c.id
-             )
-           )
-         ORDER BY (cu.id = (
-           SELECT p2.customer_unit_id FROM payments p2
-           WHERE p2.customer_id = c.id
-             AND p2.payment_month = ANY($1)
-             AND p2.deleted_at IS NULL
-           LIMIT 1
-         )) DESC, cu.created_at DESC
-         LIMIT 1
+         SELECT string_agg(DISTINCT cu.unit_no, ', ' ORDER BY cu.unit_no) AS unit_no
+         FROM payments p4
+         JOIN customer_units cu ON cu.id = p4.customer_unit_id
+         WHERE p4.customer_id = c.id
+           AND p4.payment_month = ANY($1)
+           AND p4.deleted_at IS NULL
+           AND p4.status <> 'Cancelled'
        ) cu_agg ON TRUE
        WHERE c.deleted_at IS NULL
          AND p.payment_month = ANY($1)

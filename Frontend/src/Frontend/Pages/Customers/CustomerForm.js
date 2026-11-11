@@ -982,6 +982,7 @@ const CustomerForm = () => {
 
   const [loading, setLoading] = useState(false);
   const [errors,  setErrors]  = useState({});
+  const [emailCheck, setEmailCheck] = useState('idle'); // idle | checking | ok | taken
 
   const floorOptions = Array.from({ length: 30 }, (_, i) => ({
     value: String(i + 1),
@@ -1194,11 +1195,39 @@ const CustomerForm = () => {
     return Object.keys(e).length === 0;
   };
 
+  // ── Live duplicate-email check ───────────────────────────────────────────────
+  // Same PAN (an existing customer buying another flat) may reuse its email;
+  // any other customer may not. Returns true when the email can be used.
+  const checkEmailAvailable = async () => {
+    const email = (identity.email || '').trim().toLowerCase();
+    if (!validateEmail(email)) return true;          // format error is shown by validate()
+    if (existingCustomer && !isEdit) return true;     // email locked to the PAN's customer
+    try {
+      setEmailCheck('checking');
+      const res = await customerService.checkEmail(email, {
+        pan: identity.panNumber, excludeUnitId: isEdit ? id : undefined,
+      });
+      if (res?.available) { setEmailCheck('ok'); return true; }
+      setEmailCheck('taken');
+      setErrors((prev) => ({ ...prev, email: res?.message || 'This email is already registered to another customer.' }));
+      return false;
+    } catch {
+      setEmailCheck('idle');                          // server re-checks on save anyway
+      return true;
+    }
+  };
+
+  const handleEmailBlur = () => { checkEmailAvailable(); };
+
   // ── Submit ─────────────────────────────────────────────────────────────────
   const handleSubmit = async (ev) => {
     ev.preventDefault();
     if (!validate()) {
       toast.error('Please fix the validation errors before submitting');
+      return;
+    }
+    if (!(await checkEmailAvailable())) {
+      toast.error('This email is already registered to another customer.');
       return;
     }
 
@@ -1258,6 +1287,13 @@ const CustomerForm = () => {
         setExistingCustomer(null);
         setExistingUnits([]);
         setPanLookupStatus('idle');
+        // Financial details are a separate step — make that obvious and go straight there.
+        const newUnitId = res?.data?.unitId;
+        if (newUnitId) {
+          toast.warning('Financial details are still PENDING for this unit — please fill them now.', { autoClose: 8000 });
+          navigate(`/financial?unit=${newUnitId}`);
+          return;
+        }
       }
       navigate('/customers');
     } catch (err) {
@@ -1395,11 +1431,18 @@ const CustomerForm = () => {
                   className={`form-control ${errors.email ? 'is-invalid' : ''}`}
                   name="email"
                   value={identity.email}
-                  onChange={handleIdentityChange}
+                  onChange={(e) => { setEmailCheck('idle'); handleIdentityChange(e); }}
+                  onBlur={handleEmailBlur}
                   placeholder="example@domain.com"
                   readOnly={!!existingCustomer && !isEdit}
                 />
                 {errors.email && <div className="invalid-feedback">{errors.email}</div>}
+                {!errors.email && emailCheck === 'checking' && (
+                  <div className="form-text"><span className="spinner-border spinner-border-sm me-1" />Checking email…</div>
+                )}
+                {!errors.email && emailCheck === 'ok' && (
+                  <div className="form-text text-success"><i className="bi bi-check-circle me-1" />Email is available</div>
+                )}
               </div>
 
               <div className="col-md-6">

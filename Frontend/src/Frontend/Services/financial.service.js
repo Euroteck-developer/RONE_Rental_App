@@ -31,8 +31,12 @@ const financialService = {
       const response = await api.get(`/financial/customer/${customerId}`);
       return response.data;
     } catch (error) {
-      // 404 means no record yet — throw so caller can handle gracefully
-      throw error.response?.data || { error: 'Financial record not found' };
+      // Include the HTTP status: 404 = no record yet (safe to start a new form),
+      // anything else = real error (caller must NOT show an empty form).
+      const data = error.response?.data || { error: 'Failed to load financial record' };
+      throw Object.assign(new Error(data.error || 'Failed to load financial record'), data, {
+        status: error.response?.status || 0,
+      });
     }
   },
 
@@ -53,6 +57,17 @@ const financialService = {
       return response.data;
     } catch (error) {
       throw error.response?.data || { error: 'Failed to delete financial record' };
+    }
+  },
+
+  // ── Filled vs pending financial data per unit ───────────────────────────────
+  // Returns: { totalUnits, filled, pending, pendingList: [...] }
+  getStatusSummary: async () => {
+    try {
+      const response = await api.get('/financial/status-summary');
+      return response.data.data;
+    } catch (error) {
+      throw error.response?.data || { error: 'Failed to fetch financial status' };
     }
   },
 

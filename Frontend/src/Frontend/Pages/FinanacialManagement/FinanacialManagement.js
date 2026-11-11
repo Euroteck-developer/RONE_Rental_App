@@ -795,6 +795,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { toast } from 'react-toastify';
 import Select from 'react-select';
+import { useSearchParams } from 'react-router-dom';
 import customerService from '../../Services/customer.service';
 import financialService from '../../Services/financial.service';
 
@@ -905,6 +906,15 @@ const UnitOption = ({ data, innerProps, isFocused, isSelected }) => (
     }}
   >
     <div className="d-flex align-items-center gap-2 flex-wrap">
+      {data.unit.has_financial ? (
+        <span className="badge bg-success" style={{ fontSize: '0.68rem' }} title="Financial details saved">
+          <i className="bi bi-check-circle me-1" />Filled
+        </span>
+      ) : (
+        <span className="badge bg-danger" style={{ fontSize: '0.68rem' }} title="Financial details NOT filled yet">
+          <i className="bi bi-exclamation-circle me-1" />Pending
+        </span>
+      )}
       <span className={`badge ${isSelected ? 'bg-light text-primary' : 'bg-primary'}`}
         style={{ fontSize: '0.7rem' }}>
         {data.unit.unit_ref || 'UNIT'}
@@ -959,23 +969,37 @@ const FinancialManagement = () => {
   const [partialPayments, setPartialPayments] = useState([]);
   const [errors,          setErrors]          = useState({});
   const [loading,         setLoading]         = useState(false);
+  const [pendingOnly,     setPendingOnly]     = useState(false);
+  // 'filled' | 'pending' | null — status of the currently selected unit
+  const [recordStatus,    setRecordStatus]    = useState(null);
+  const [searchParams]                        = useSearchParams();
 
-  useEffect(() => { loadUnits(); }, []);
+  useEffect(() => { loadUnits(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* ── Load all units ── */
+  /* ── Load all units (complete — never truncated) ── */
   const loadUnits = async () => {
     try {
-      const r = await customerService.getAllCustomers({ limit: 1000 });
-      setUnits(r.data.customers || []);
-    } catch {
-      toast.error('Failed to load units');
+      const all = await customerService.getAllCustomersComplete();
+      setUnits(all);
+      return all;
+    } catch (err) {
+      toast.error(err?.message || 'Failed to load units');
+      return [];
     }
   };
 
-  /* ── Build grouped react-select options ── */
+  /* ── Filled / pending counters ── */
+  const statusCounts = useMemo(() => {
+    const filled = units.filter((u) => u.has_financial).length;
+    return { total: units.length, filled, pending: units.length - filled };
+  }, [units]);
+
+  /* ── Build grouped react-select options (pending units first) ── */
   const groupedOptions = useMemo(() => {
     const map = {};
-    units.forEach((u) => {
+    const source = pendingOnly ? units.filter((u) => !u.has_financial) : units;
+    const sorted = [...source].sort((a, b) => Number(!!a.has_financial) - Number(!!b.has_financial));
+    sorted.forEach((u) => {
       const key = u.customer_ref || u.customer_id || u.id;
       if (!map[key]) {
         map[key] = {
@@ -990,7 +1014,7 @@ const FinancialManagement = () => {
       });
     });
     return Object.values(map);
-  }, [units]);
+  }, [units, pendingOnly]);
 
   /* ── Custom filter: search by customer name, unit ref, unit no, floor ── */
   const filterOption = useCallback((option, inputValue) => {
@@ -1085,20 +1109,42 @@ const FinancialManagement = () => {
         } else {
           setPartialPayments([]);
         }
+        setRecordStatus('filled');
         toast.info(`Financial data loaded for ${sel?.unit_ref || 'unit'}`);
       } else {
-        setFormData((prev) => ({ ...prev, customerUnitId: unitId, sqft: sel?.sqft || '' }));
-        setPartialPayments([]);
-        setPaymentMode('full');
-        setTdsOverride('auto');
+        startEmptyForm(unitId, sel);
       }
-    } catch {
-      setFormData((prev) => ({ ...prev, customerUnitId: unitId, sqft: sel?.sqft || '' }));
-      setPartialPayments([]);
-      setPaymentMode('full');
-      setTdsOverride('auto');
+    } catch (err) {
+      if (err?.status === 404) {
+        // Genuinely no record yet → start a fresh form and say so clearly.
+        startEmptyForm(unitId, sel);
+      } else {
+        // Any OTHER error (network / server): do NOT show an empty form, otherwise
+        // saving it could overwrite the existing financial record with blanks.
+        toast.error('Could not load the financial data for this unit. Please try again.');
+        handleReset();
+      }
     }
   };
+
+  const startEmptyForm = (unitId, sel) => {
+    setFormData({ ...EMPTY_FORM, customerUnitId: unitId, sqft: sel?.sqft || '' });
+    setPartialPayments([]);
+    setPaymentMode('full');
+    setTdsOverride('auto');
+    setRecordStatus('pending');
+  };
+
+  /* ── Pre-select a unit from the URL (?unit=<id>), e.g. from Customer list / after create ── */
+  useEffect(() => {
+    const unitId = searchParams.get('unit');
+    if (!unitId || !units.length || selectedOption) return;
+    const u = units.find((x) => x.id === unitId);
+    if (u) {
+      handleUnitSelect({ value: u.id, unit: u, label: u.unit_ref || u.unit_no });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [units, searchParams]);
 
   /* ── Field change ── */
   const handleChange = useCallback((e) => {
@@ -1201,6 +1247,10 @@ const FinancialManagement = () => {
       await financialService.upsertFinancialRecord(payload);
       toast.success('Financial data saved successfully!');
       handleReset();
+      // Refresh Filled / Pending badges and counters
+      const fresh = await loadUnits();
+      const stillPending = fresh.filter((u) => !u.has_financial).length;
+      if (stillPending > 0) toast.info(`${stillPending} unit(s) still pending financial details.`);
     } catch (err) {
       toast.error(err?.error || err?.message || 'Failed to save financial data');
     } finally {
@@ -1217,6 +1267,7 @@ const FinancialManagement = () => {
     setErrors({});
     setSelectedUnit(null);
     setSelectedOption(null);
+    setRecordStatus(null);
   };
 
   /* ─── react-select custom styles ─── */
@@ -1264,6 +1315,35 @@ const FinancialManagement = () => {
         )}
       </div>
 
+      {/* ══ Completion status — which units still need financial details ══ */}
+      {statusCounts.total > 0 && (
+        <div className={`alert ${statusCounts.pending ? 'alert-warning' : 'alert-success'} d-flex flex-wrap align-items-center justify-content-between gap-2 shadow-sm`}>
+          <div>
+            <i className={`bi ${statusCounts.pending ? 'bi-exclamation-triangle-fill' : 'bi-check-circle-fill'} me-2`} />
+            <strong>Filled {statusCounts.filled} / {statusCounts.total}</strong>
+            {statusCounts.pending > 0 ? (
+              <> · <strong className="text-danger">{statusCounts.pending} unit{statusCounts.pending > 1 ? 's' : ''} pending</strong> — financial details not entered yet.</>
+            ) : (
+              <> · All units have financial details.</>
+            )}
+          </div>
+          {statusCounts.pending > 0 && (
+            <div className="form-check form-switch mb-0">
+              <input
+                className="form-check-input"
+                type="checkbox"
+                id="pendingOnlySwitch"
+                checked={pendingOnly}
+                onChange={(e) => setPendingOnly(e.target.checked)}
+              />
+              <label className="form-check-label small fw-semibold" htmlFor="pendingOnlySwitch">
+                Show pending units only
+              </label>
+            </div>
+          )}
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} noValidate>
 
         {/* ══ STEP 1 — Unit Selection ══ */}
@@ -1305,8 +1385,21 @@ const FinancialManagement = () => {
                   </div>
                 )}
                 <div className="form-text">
-                  Type a name, unit number, floor or PAN to search. Units are grouped by customer.
+                  Type a name, unit number, floor or PAN to search. Units are grouped by customer;
+                  units marked <span className="badge bg-danger">Pending</span> have no financial details yet.
                 </div>
+                {recordStatus === 'pending' && (
+                  <div className="alert alert-danger py-2 mt-2 mb-0 small">
+                    <i className="bi bi-exclamation-octagon me-1" />
+                    <strong>No financial data saved for this unit yet.</strong> Fill in the details below and save.
+                  </div>
+                )}
+                {recordStatus === 'filled' && (
+                  <div className="alert alert-success py-2 mt-2 mb-0 small">
+                    <i className="bi bi-check-circle me-1" />
+                    Financial data already saved for this unit — you are editing the existing record.
+                  </div>
+                )}
               </div>
 
               {/* Sqft */}

@@ -783,6 +783,7 @@
 'use strict';
 
 const { query, transaction } = require('../config/database');
+const { sendError } = require('../utils/safeError');
 
 // ─── Validators ────────────────────────────────────────────────────────────────
 const validatePAN   = (v) => /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/i.test((v || '').trim());
@@ -949,7 +950,8 @@ const createCustomer = async (req, res) => {
 
       if (existing.rows.length > 0) {
         const ec = existing.rows[0];
-        if (ec.email !== emailLo)
+        // Case/space-insensitive: older rows may be stored in mixed case.
+        if ((ec.email || '').trim().toLowerCase() !== emailLo)
           throw Object.assign(
             new Error('Email does not match existing record for this PAN'),
             { statusCode: 409 }
@@ -966,12 +968,12 @@ const createCustomer = async (req, res) => {
         // Only email and GST must be unique.
         const dup = await client.query(
           `SELECT CASE
-             WHEN COUNT(*) FILTER (WHERE email = $1) > 0 THEN 'Email'
-             WHEN COUNT(*) FILTER (WHERE gst_no = $2 AND $2 != '') > 0 THEN 'GST Number'
+             WHEN COUNT(*) FILTER (WHERE LOWER(TRIM(email)) = $1) > 0 THEN 'Email'
+             WHEN COUNT(*) FILTER (WHERE UPPER(TRIM(gst_no)) = $2 AND $2 != '') > 0 THEN 'GST Number'
            END AS dup
            FROM customers
            WHERE deleted_at IS NULL
-             AND (email = $1 OR ($2 != '' AND gst_no = $2))`,
+             AND (LOWER(TRIM(email)) = $1 OR ($2 != '' AND UPPER(TRIM(gst_no)) = $2))`,
           [emailLo, gstUp || '']
         );
         if (dup.rows[0]?.dup)
@@ -1107,17 +1109,14 @@ const createCustomer = async (req, res) => {
       data: responseData,
     });
   } catch (err) {
-    console.error('createCustomer:', err);
-    if (err.statusCode === 409 || err.code === '23505')
-      return res.status(409).json({ success: false, error: err.message || 'Duplicate record' });
-    return res.status(500).json({ success: false, error: err.message || 'Failed to create customer / unit' });
+    return sendError(res, err, 'createCustomer');
   }
 };
 
 // ─── GET ALL ───────────────────────────────────────────────────────────────────
 const getAllCustomers = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search, status, agreementType, floorNo } = req.query;
+    const { page = 1, limit = 10, search, status, agreementType, floorNo, financialStatus } = req.query;
     const pageNum  = Math.max(1, parseInt(page,  10) || 1);
     const limitNum = Math.min(5000, Math.max(1, parseInt(limit, 10) || 10));
     const offset   = (pageNum - 1) * limitNum;
@@ -1142,10 +1141,19 @@ const getAllCustomers = async (req, res) => {
     if (status)        { where += ` AND cu.status = $${pi}`;         params.push(status);        pi++; }
     if (agreementType) { where += ` AND cu.agreement_type = $${pi}`; params.push(agreementType); pi++; }
     if (floorNo)       { where += ` AND cu.floor_no ILIKE $${pi}`;   params.push(`%${floorNo}%`); pi++; }
+    // Financial Management completeness filter (computed, read-only)
+    if (financialStatus === 'pending') where += ` AND fr.id IS NULL`;
+    if (financialStatus === 'filled')  where += ` AND fr.id IS NOT NULL`;
 
     const base = `
       FROM customer_units cu
       JOIN customers c ON cu.customer_id = c.id
+      LEFT JOIN LATERAL (
+        SELECT id, updated_at, created_at
+        FROM financial_records
+        WHERE customer_unit_id = cu.id AND deleted_at IS NULL
+        ORDER BY created_at DESC LIMIT 1
+      ) fr ON TRUE
       ${where}`;
 
     const [rows, countRes] = await Promise.all([
@@ -1181,9 +1189,12 @@ const getAllCustomers = async (req, res) => {
            c.gst_no,
            c.cgst,
            c.sgst,
-           c.address
+           c.address,
+           c.id                                   AS customer_db_id,
+           (fr.id IS NOT NULL)                    AS has_financial,
+           COALESCE(fr.updated_at, fr.created_at) AS financial_updated_at
          ${base}
-         ORDER BY cu.created_at DESC
+         ORDER BY cu.created_at DESC, cu.id DESC
          LIMIT $${pi} OFFSET $${pi + 1}`,
         [...params, limitNum, offset]
       ),
@@ -1306,7 +1317,7 @@ const updateCustomer = async (req, res) => {
       if (emailLo) {
         const emailConflict = await client.query(
           `SELECT id FROM customers
-           WHERE email = $1 AND id != $2 AND deleted_at IS NULL LIMIT 1`,
+           WHERE LOWER(TRIM(email)) = $1 AND id != $2 AND deleted_at IS NULL LIMIT 1`,
           [emailLo, cid]
         );
         if (emailConflict.rows.length)
@@ -1433,12 +1444,7 @@ const updateCustomer = async (req, res) => {
       data:    fresh.rows[0],
     });
   } catch (err) {
-    console.error('updateCustomer:', err);
-    if (err.statusCode === 404)
-      return res.status(404).json({ success: false, error: err.message });
-    if (err.statusCode === 409 || err.code === '23505')
-      return res.status(409).json({ success: false, error: err.message || 'Duplicate record' });
-    return res.status(500).json({ success: false, error: err.message || 'Failed to update unit' });
+    return sendError(res, err, 'updateCustomer');
   }
 };
 
@@ -1623,7 +1629,48 @@ const getCustomerStats = async (_req, res) => {
   }
 };
 
+// ─── CHECK EMAIL AVAILABILITY (read-only) ─────────────────────────────────────
+// GET /customers/check-email?email=&pan=&excludeUnitId=
+// An email may be reused only by the SAME customer (same PAN → additional flat).
+const checkEmailAvailability = async (req, res) => {
+  try {
+    const emailLo = String(req.query.email || '').trim().toLowerCase();
+    const panUp   = String(req.query.pan   || '').trim().toUpperCase();
+    const excludeUnitId = req.query.excludeUnitId || null;
+
+    if (!emailLo || !validateEmail(emailLo))
+      return res.status(400).json({ success: false, error: 'Invalid email address' });
+
+    const { rows } = await query(
+      `SELECT id, pan_number FROM customers
+       WHERE LOWER(TRIM(email)) = $1 AND deleted_at IS NULL`,
+      [emailLo]
+    );
+    if (!rows.length) return res.json({ success: true, data: { available: true } });
+
+    if (panUp && rows.every((r) => (r.pan_number || '').toUpperCase() === panUp))
+      return res.json({ success: true, data: { available: true, sameCustomer: true } });
+
+    if (excludeUnitId && /^[0-9a-f-]{36}$/i.test(excludeUnitId)) {
+      const { rows: own } = await query(
+        `SELECT customer_id FROM customer_units WHERE id = $1`, [excludeUnitId]
+      );
+      if (own.length && rows.every((r) => r.id === own[0].customer_id))
+        return res.json({ success: true, data: { available: true, sameCustomer: true } });
+    }
+
+    return res.json({
+      success: true,
+      data: { available: false, message: 'This email is already registered to another customer.' },
+    });
+  } catch (err) {
+    console.error('checkEmailAvailability:', err);
+    return res.status(500).json({ success: false, error: 'Something went wrong. Please try again.' });
+  }
+};
+
 module.exports = {
+  checkEmailAvailability,
   lookupByPAN,
   createCustomer,
   getAllCustomers,

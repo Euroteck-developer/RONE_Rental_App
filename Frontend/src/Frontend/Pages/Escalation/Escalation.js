@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { toast } from 'react-toastify';
 import escalationService from '../../Services/escalation.service';
+import Pagination from '../../Components/Pagination';
 import { formatCurrency, formatDate } from '../../Utils/helpers';
 
 const Escalation = () => {
@@ -20,7 +21,7 @@ const Escalation = () => {
   useEffect(() => { 
     fetchEscalations(); 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pagination.page, filterStatus, filterType]);
+  }, [pagination.page, pagination.limit, filterStatus, filterType]);
 
   useEffect(() => { 
     fetchStats(); 
@@ -319,28 +320,16 @@ const Escalation = () => {
               </div>
 
               {/* Pagination */}
-              {pagination.totalPages > 1 && (
-                <div className="d-flex justify-content-between align-items-center px-3 py-3 border-top">
-                  <small className="text-muted">
-                    Showing {((pagination.page - 1) * pagination.limit) + 1}–{Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total}
-                  </small>
-                  <nav>
-                    <ul className="pagination pagination-sm mb-0">
-                      <li className={`page-item ${pagination.page === 1 ? 'disabled' : ''}`}>
-                        <button className="page-link" onClick={() => setPagination(p => ({ ...p, page: p.page - 1 }))}>‹</button>
-                      </li>
-                      {[...Array(Math.min(5, pagination.totalPages))].map((_, i) => (
-                        <li key={i + 1} className={`page-item ${pagination.page === i + 1 ? 'active' : ''}`}>
-                          <button className="page-link" onClick={() => setPagination(p => ({ ...p, page: i + 1 }))}>{i + 1}</button>
-                        </li>
-                      ))}
-                      <li className={`page-item ${pagination.page === pagination.totalPages ? 'disabled' : ''}`}>
-                        <button className="page-link" onClick={() => setPagination(p => ({ ...p, page: p.page + 1 }))}>›</button>
-                      </li>
-                    </ul>
-                  </nav>
-                </div>
-              )}
+              <Pagination
+                page={pagination.page}
+                totalPages={pagination.totalPages}
+                total={pagination.total}
+                limit={pagination.limit}
+                itemLabel="escalations"
+                pageSizeOptions={[20, 50, 100]}
+                onPageChange={(pg) => setPagination(p => ({ ...p, page: pg }))}
+                onLimitChange={(l) => setPagination(p => ({ ...p, page: 1, limit: l }))}
+              />
             </>
           )}
         </div>

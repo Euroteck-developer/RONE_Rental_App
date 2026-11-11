@@ -774,6 +774,34 @@ const GenerateMonthlyPayments = () => {
             </div>
           )}
 
+          {/* Older payments without a unit for multi-flat customers — never hidden */}
+          {result.warnings?.length > 0 && (
+            <div className="card mb-3 border-danger">
+              <div className="card-header bg-danger text-white">
+                <h6 className="mb-0">
+                  <i className="bi bi-exclamation-triangle me-2" />
+                  Please verify — possible double payment ({result.warnings.length})
+                </h6>
+              </div>
+              <div className="card-body p-0">
+                <table className="table table-sm mb-0">
+                  <thead className="table-light">
+                    <tr><th>Customer</th><th>Unlinked payments</th><th>Reason</th></tr>
+                  </thead>
+                  <tbody>
+                    {result.warnings.map((item, i) => (
+                      <tr key={i}>
+                        <td>{item.customerName || '—'}</td>
+                        <td>{item.legacyPaymentIds?.length || 0}</td>
+                        <td className="text-muted">{item.reason}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {/* Actions */}
           <div className="d-flex justify-content-end gap-2">
             <button className="btn btn-outline-secondary" onClick={() => setResult(null)}>

@@ -8,9 +8,93 @@ import { formatDate }  from '../../Utils/helpers';
 
 // ─── Rounding helpers ─────────────────────────────────────────────────────────
 const r2 = (v) => Math.round((parseFloat(v) || 0) * 100) / 100;
-const r0 = (v) => Math.round(parseFloat(v) || 0);
+// Amounts are shown EXACT to the paisa (same as the database). Previously each
+// row was rounded to whole rupees while totals were rounded separately, so a
+// column did not always add up to its own TOTAL row.
+const r0 = r2;
 
 const getCurrentMonth = () => new Date().toISOString().slice(0, 7);
+
+// Quarter as RENT MONTHS (payment_month), not payment dates — so March rent paid
+// on 2 April still belongs to Q4 of the same financial year.
+const getQuarterMonths = (fy, quarter) => {
+  const y = parseInt(fy.start.split('-')[0], 10);
+  return {
+    Q1: { monthFrom: `${y}-04`,     monthTo: `${y}-06` },
+    Q2: { monthFrom: `${y}-07`,     monthTo: `${y}-09` },
+    Q3: { monthFrom: `${y}-10`,     monthTo: `${y}-12` },
+    Q4: { monthFrom: `${y + 1}-01`, monthTo: `${y + 1}-03` },
+  }[quarter];
+};
+
+// ─── Legacy duplicate detection (display only — no data is changed) ──────────
+// An older payment saved WITHOUT a unit that the server resolved to a flat
+// (single-flat customer), in a month where that flat ALSO has a normal payment,
+// is a probable double entry. It is excluded from totals and listed on the
+// "Exceptions" sheet so finance can verify/cancel it in the app.
+const splitOutLegacyDuplicates = (rows) => {
+  const normalKeys = new Set(
+    rows
+      .filter((p) => p.customer_unit_id && (p.installment_no === null || p.installment_no === undefined))
+      .map((p) => `${p.customer_unit_id}__${p.payment_month}`),
+  );
+  const included = [], excluded = [];
+  rows.forEach((p) => {
+    const isLegacySingle = !p.customer_unit_id && p.resolved_unit_id
+      && (p.installment_no === null || p.installment_no === undefined);
+    if (isLegacySingle && normalKeys.has(`${p.resolved_unit_id}__${p.payment_month}`)) {
+      excluded.push({ ...p, _excludeReason: 'Possible duplicate: older payment saved without unit; this flat already has a payment for the same month' });
+    } else {
+      included.push(p);
+    }
+  });
+  return { included, excluded };
+};
+
+const sumRows = (rows) => rows.reduce((acc, p) => ({
+  count: acc.count + 1,
+  gross: r2(acc.gross + r2(p.gross_amount)),
+  tds:   r2(acc.tds   + r2(p.tds_amount)),
+  net:   r2(acc.net   + r2(p.net_payout)),
+}), { count: 0, gross: 0, tds: 0, net: 0 });
+
+// Payment date shown for a grouped unit-month row: one date, or the date range
+// when several instalments (received on different dates) are combined.
+const groupDateLabel = (g) => {
+  const ds = Array.from(new Set((g._dates || []).map((d) => String(d).slice(0, 10)))).sort();
+  if (!ds.length) return '';
+  if (ds.length === 1) return formatDate(ds[0]);
+  return `${formatDate(ds[0])} – ${formatDate(ds[ds.length - 1])} (${ds.length} dates)`;
+};
+
+// The database check still runs before every download (loadReportData throws on
+// any mismatch, so no file is produced). Only an "Exceptions" sheet is added,
+// and only when there are rows the user must look at.
+const appendReconciliationSheets = (wb, { data }) => {
+  const { included, excluded } = data;
+  const unlinked = included.filter((p) => p.unit_unlinked);
+
+  const exceptions = [...excluded, ...unlinked];
+  if (exceptions.length) {
+    const exRows = exceptions.map((p, i) => ({
+      'S.No':          i + 1,
+      'Payment ID':    p.id,
+      'Customer Name': p.customer_name || '',
+      'Customer ID':   p.customer_code || '',
+      'Rent Month':    p.payment_month || '',
+      'Payment Date':  p.payment_date ? formatDate(p.payment_date) : '',
+      'Status':        p.status || '',
+      'Gross (₹)':     r2(p.gross_amount),
+      'TDS (₹)':       r2(p.tds_amount),
+      'Net (₹)':       r2(p.net_payout),
+      'In totals?':    p._excludeReason ? 'No' : 'Yes',
+      'Reason':        p._excludeReason || 'Saved without unit; customer has several flats – unit cannot be determined automatically',
+    }));
+    const wsE = XLSX.utils.json_to_sheet(exRows);
+    wsE['!cols'] = [{wch:5},{wch:38},{wch:28},{wch:13},{wch:10},{wch:13},{wch:11},{wch:13},{wch:11},{wch:13},{wch:10},{wch:90}];
+    XLSX.utils.book_append_sheet(wb, wsE, 'Exceptions');
+  }
+};
 
 const getCurrentFinancialYear = () => {
   const now = new Date();
@@ -20,15 +104,6 @@ const getCurrentFinancialYear = () => {
   return { start: `${y - 1}-04`, end: `${y}-03`, label: `FY ${y - 1}-${y}` };
 };
 
-const getQuarterRange = (fy, quarter) => {
-  const y = parseInt(fy.start.split('-')[0]);
-  return {
-    Q1: { start: `${y}-04-01`,     end: `${y}-06-30`     },
-    Q2: { start: `${y}-07-01`,     end: `${y}-09-30`     },
-    Q3: { start: `${y}-10-01`,     end: `${y}-12-31`     },
-    Q4: { start: `${y + 1}-01-01`, end: `${y + 1}-03-31` },
-  }[quarter];
-};
 
 // ─── GST on net_payout (after TDS) ───────────────────────────────────────────
 const calcGST = (p) => {
@@ -202,10 +277,12 @@ const groupPayments = (payments, { tdsOnly = false } = {}) => {
       map[key] = {
         ...p,
         // Ensure unit fields are always populated from the payment row
-        unit_no:          p.unit_no   || '',
-        floor_no:         p.floor_no  || '',
-        customer_unit_id: p.customer_unit_id || null,
+        unit_no:          p.unit_unlinked ? 'Not linked' : (p.unit_no || ''),
+        floor_no:         p.unit_unlinked ? '' : (p.floor_no || ''),
+        customer_unit_id: p.customer_unit_id || p.resolved_unit_id || null,
         _gross:    r2(p.gross_amount),
+        _base:     r2(p.base_rent),
+        _dates:    p.payment_date ? [p.payment_date] : [],
         _tds:      r2(p.tds_amount),
         _net:      net,
         _cgstAmt:  gst.cgstAmt,
@@ -219,6 +296,8 @@ const groupPayments = (payments, { tdsOnly = false } = {}) => {
     } else {
       const g = map[key];
       g._gross    = r2(g._gross    + r2(p.gross_amount));
+      g._base     = r2(g._base     + r2(p.base_rent));
+      if (p.payment_date) g._dates.push(p.payment_date);
       g._tds      = r2(g._tds      + r2(p.tds_amount));
       g._net      = r2(g._net      + net);
       g._cgstAmt  = r2(g._cgstAmt  + gst.cgstAmt);
@@ -244,11 +323,12 @@ const groupPayments = (payments, { tdsOnly = false } = {}) => {
   });
 };
 
-// Build the group key: prefer customer_unit_id; fall back to unit_no+floor_no
+// Build the group key: the payment's unit, or the unit the server resolved
+// unambiguously (single-flat customer). A payment whose unit cannot be
+// determined is NEVER merged with another row — it gets its own line.
 const _groupKey = (p) => {
-  const unitPart = p.customer_unit_id
-    ? `uid_${p.customer_unit_id}`
-    : `leg_${p.customer_id || p.customer_code}_u${p.unit_no || 'x'}_f${p.floor_no || 'x'}`;
+  const uid = p.customer_unit_id || p.resolved_unit_id;
+  const unitPart = uid ? `uid_${uid}` : `unlinked_pay_${p.id}`;
   return `${unitPart}__${p.payment_month}`;
 };
 
@@ -389,39 +469,89 @@ const Reports = () => {
     if (customersLoaded || customersLoading) return;
     setCustomersLoading(true);
     try {
-      const res = await customerService.getAllCustomers({ limit: 5000 });
-      setCustomers(res.data.customers || []);
+      const all = await customerService.getAllCustomersComplete();
+      setCustomers(all);
       setCustomersLoaded(true);
-    } catch { toast.error('Failed to load customer list'); }
+    } catch (err) { toast.error(err?.message || 'Failed to load customer list'); }
     finally { setCustomersLoading(false); }
   };
 
   // ── React-Select options ──────────────────────────────────────────────────
-  // One option per customer_unit so filtering by unit works correctly.
-  // If a customer has multiple units they appear multiple times (one per unit).
+  // getAllCustomers returns ONE ROW PER UNIT: row.id = unit id,
+  // row.customer_id / customer_db_id = customers.id.
+  // → one option per flat, plus an "All units" option for multi-flat customers.
   const customerOptions = useMemo(() => {
+    const byCustomer = new Map();
+    customers.forEach((row) => {
+      const custKey = row.customer_db_id || row.customer_id;
+      if (!byCustomer.has(custKey)) byCustomer.set(custKey, []);
+      byCustomer.get(custKey).push(row);
+    });
+
     const opts = [];
-    customers.forEach((c) => {
-      if (c.units && c.units.length > 0) {
-        c.units.forEach((u) => {
-          opts.push({
-            value:    `${c.id}_${u.id}`,
-            label:    `${c.customer_name}  ·  ${c.customer_ref || c.customer_id}  ·  F${u.floor_no || '?'} U${u.unit_no || '?'}`,
-            customer: c,
-            unit:     u,
-          });
-        });
-      } else {
+    byCustomer.forEach((rows, custKey) => {
+      const c = rows[0];
+      const ref = c.customer_ref || '';
+      if (rows.length > 1) {
         opts.push({
-          value:    c.id,
-          label:    `${c.customer_name}  ·  ${c.customer_ref || c.customer_id}  ·  F${c.floor_no || '?'} U${c.unit_no || '?'}`,
+          value:    `cust_${custKey}`,
+          label:    `${c.customer_name}  ·  ${ref}  ·  All units (${rows.length})`,
           customer: c,
           unit:     null,
         });
       }
+      rows.forEach((u) => {
+        opts.push({
+          value:    u.id,
+          label:    `${u.customer_name}  ·  ${ref}  ·  F${u.floor_no || '?'} U${u.unit_no || '?'}${u.unit_ref ? `  (${u.unit_ref})` : ''}`,
+          customer: u,
+          unit: {
+            id: u.id, unit_no: u.unit_no, floor_no: u.floor_no, unit_ref: u.unit_ref,
+            agreement_type: u.agreement_type, status: u.status,
+            bank_account_number: u.bank_account_number, ifsc_code: u.ifsc_code,
+          },
+        });
+      });
     });
     return opts;
   }, [customers]);
+
+  // ── Load report rows: server-filtered, complete, cancelled excluded, verified ──
+  // Throws (→ no file is produced) if the loaded rows do not match the database totals.
+  const loadReportData = async (baseParams, selectedOption) => {
+    const params = { ...baseParams, excludeCancelled: 'true' };
+    if (selectedOption?.unit?.id) {
+      params.customerUnitId = selectedOption.unit.id;
+    } else if (selectedOption?.customer) {
+      params.customerId = selectedOption.customer.customer_db_id || selectedOption.customer.customer_id;
+    }
+    Object.keys(params).forEach((k) => { if (params[k] === undefined || params[k] === '') delete params[k]; });
+
+    const [rawAll, totals] = await Promise.all([
+      paymentService.getAllPaymentHistory(params),
+      paymentService.getReportTotals(params),
+    ]);
+
+    const s = sumRows(rawAll);
+    const ok = s.count === totals.rowCount
+      && Math.abs(s.gross - totals.totalGross) <= 0.01
+      && Math.abs(s.tds   - totals.totalTds)   <= 0.01
+      && Math.abs(s.net   - totals.totalNet)   <= 0.01;
+    if (!ok) {
+      throw new Error(
+        `Report verification failed: loaded ${s.count} rows / ₹${s.net} net, database has ${totals.rowCount} rows / ₹${totals.totalNet}. ` +
+        'Data may have changed while loading — please try again.',
+      );
+    }
+
+    const { included, excluded } = splitOutLegacyDuplicates(applyCustomerFilter(rawAll, selectedOption));
+    return { rawAll, included, excluded, totals };
+  };
+
+  const reportErrorToast = (err, fallback) => {
+    console.error(err);
+    toast.error(err?.message && !/^Request failed/i.test(err.message) ? err.message : fallback, { autoClose: 10000 });
+  };
 
   const filterOption = useCallback((option, inputValue) => {
     if (!inputValue) return true;
@@ -473,33 +603,23 @@ const Reports = () => {
     const cust = selectedOption.customer;
     const unit = selectedOption.unit;
 
-    return payments.filter((p) => {
-      // If a specific unit was selected, match by unit ID first
-      if (unit?.id && p.customer_unit_id) {
-        return p.customer_unit_id === unit.id;
-      }
-      // Fall back to customer identity matching
-      return (
-        p.customer_id   === cust.id          ||
-        p.customer_id   === cust.customer_id ||
-        p.customer_code === cust.customer_ref ||
-        p.customer_code === cust.customer_id  ||
-        (p.customer_name || '').toLowerCase() === (cust.customer_name || '').toLowerCase()
-      );
-    });
+    // Strict ID matching only — NEVER by name (two people can share a name).
+    if (unit?.id) {
+      return payments.filter((p) => (p.customer_unit_id || p.resolved_unit_id) === unit.id);
+    }
+    const custId = cust.customer_db_id || cust.customer_id;
+    return payments.filter((p) => p.customer_id === custId);
   };
 
   // ── MONTHLY REPORT ────────────────────────────────────────────────────────
   const generateMonthlyReport = async () => {
     setLoad('monthly', true);
     try {
-      const result = await paymentService.getPaymentHistory({
-        month:         monthlyMonth,
-        agreementType: monthlyAgreement || undefined,
-        limit:         5000,
-      });
-      let raw = result.data.payments || [];
-      raw = applyCustomerFilter(raw, monthlyCustomer);
+      const data = await loadReportData(
+        { month: monthlyMonth, agreementType: monthlyAgreement || undefined },
+        monthlyCustomer,
+      );
+      const raw = data.included;
 
       if (!raw.length) {
         toast.warning(monthlyCustomer
@@ -522,10 +642,10 @@ const Reports = () => {
         'Floor No':        g.floor_no      || '',
         'Agreement Type':  g.agreement_type || '',
         'Bank Account No': g.bank_account_number || '',
-        'Payment Date':    g.payment_date ? formatDate(g.payment_date) : '',
+        'Payment Date':    groupDateLabel(g),
         'Period':          g.payment_month || '',
         'Inst Count':      g._count,
-        'Base Rent (₹)':   r0(g.base_rent),
+        'Base Rent (₹)':   r0(g._base),
         'Escalation (%)':  parseFloat(g.escalation_rate) || 0,
         'Gross Rent (₹)':  r0(g._gross),
         ...(showTds ? { 'TDS (₹)': r0(g._tds) } : {}),
@@ -570,11 +690,11 @@ const Reports = () => {
       // Base cols: S.No + Name + CustID + PAN + Unit + Floor + Agreement + Bank + Date + Period + Inst + BaseRent + Esc + Gross [+ TDS] + Net [+ GST cols] [+ splits] + Status
       const baseCols = hasGst
         ? (showTds
-            ? [{wch:5},{wch:28},{wch:13},{wch:13},{wch:10},{wch:8},{wch:16},{wch:20},{wch:13},{wch:12},{wch:6},{wch:12},{wch:10},{wch:14},{wch:12},{wch:14},{wch:16},{wch:12},{wch:12},{wch:14},{wch:14},{wch:10}]
-            : [{wch:5},{wch:28},{wch:13},{wch:13},{wch:10},{wch:8},{wch:16},{wch:20},{wch:13},{wch:12},{wch:6},{wch:12},{wch:10},{wch:14},{wch:14},{wch:16},{wch:12},{wch:12},{wch:14},{wch:14},{wch:10}])
+            ? [{wch:5},{wch:28},{wch:13},{wch:13},{wch:10},{wch:8},{wch:16},{wch:20},{wch:30},{wch:12},{wch:6},{wch:12},{wch:10},{wch:14},{wch:12},{wch:14},{wch:16},{wch:12},{wch:12},{wch:14},{wch:14},{wch:10}]
+            : [{wch:5},{wch:28},{wch:13},{wch:13},{wch:10},{wch:8},{wch:16},{wch:20},{wch:30},{wch:12},{wch:6},{wch:12},{wch:10},{wch:14},{wch:14},{wch:16},{wch:12},{wch:12},{wch:14},{wch:14},{wch:10}])
         : (showTds
-            ? [{wch:5},{wch:28},{wch:13},{wch:13},{wch:10},{wch:8},{wch:16},{wch:20},{wch:13},{wch:12},{wch:6},{wch:12},{wch:10},{wch:14},{wch:12},{wch:14},{wch:10}]
-            : [{wch:5},{wch:28},{wch:13},{wch:13},{wch:10},{wch:8},{wch:16},{wch:20},{wch:13},{wch:12},{wch:6},{wch:12},{wch:10},{wch:14},{wch:14},{wch:10}]);
+            ? [{wch:5},{wch:28},{wch:13},{wch:13},{wch:10},{wch:8},{wch:16},{wch:20},{wch:30},{wch:12},{wch:6},{wch:12},{wch:10},{wch:14},{wch:12},{wch:14},{wch:10}]
+            : [{wch:5},{wch:28},{wch:13},{wch:13},{wch:10},{wch:8},{wch:16},{wch:20},{wch:30},{wch:12},{wch:6},{wch:12},{wch:10},{wch:14},{wch:14},{wch:10}]);
 
       styleHeader(ws, injectSplitWidths(baseCols, splitCols, 1));
       styleTotalsRow(ws, rows.length);
@@ -599,13 +719,19 @@ const Reports = () => {
       ]);
       summaryWs['!cols'] = [{ wch: 26 }, { wch: 50 }];
       XLSX.utils.book_append_sheet(wb, summaryWs, 'Summary');
+      appendReconciliationSheets(wb, {
+        title: `Monthly Report ${monthlyMonth}`,
+        filterRows: [['Rent month', monthlyMonth], ['Agreement', monthlyAgreement || 'All'], ['Customer / Unit', custLabel]],
+        data,
+      });
 
       const custSuffix = monthlyCustomer
         ? `_${monthlyCustomer.customer.customer_name.replace(/\s+/g, '_')}${monthlyCustomer.unit ? `_U${monthlyCustomer.unit.unit_no}` : ''}`
         : '';
       XLSX.writeFile(wb, `Monthly_Report_${monthlyMonth}${custSuffix}${showTds ? '' : '_ExclTDS'}.xlsx`);
+      if (data.excluded.length) toast.warning(`${data.excluded.length} possible duplicate payment(s) excluded — see the "Exceptions" sheet.`, { autoClose: 10000 });
       toast.success('Monthly report downloaded!');
-    } catch (err) { console.error(err); toast.error('Failed to generate monthly report'); }
+    } catch (err) { reportErrorToast(err, 'Failed to generate monthly report'); }
     finally { setLoad('monthly', false); }
   };
 
@@ -613,11 +739,9 @@ const Reports = () => {
   const generateAnnualReport = async () => {
     setLoad('annual', true);
     try {
-      const result = await paymentService.getPaymentHistory({
-        startDate: fy.start + '-01', endDate: fy.end + '-31', limit: 5000,
-      });
-      let raw = result.data.payments || [];
-      raw = applyCustomerFilter(raw, annualCustomer);
+      // Financial year by RENT MONTH (Apr–Mar), every page, cancelled excluded.
+      const data = await loadReportData({ monthFrom: fy.start, monthTo: fy.end }, annualCustomer);
+      const raw = data.included;
 
       if (!raw.length) {
         toast.warning(annualCustomer
@@ -718,13 +842,22 @@ const Reports = () => {
             ? [{wch:5},{wch:12},{wch:10},{wch:16},{wch:12},{wch:16}]
             : [{wch:5},{wch:12},{wch:10},{wch:16},{wch:16}]));
       XLSX.utils.book_append_sheet(wb, wsM, 'Monthly Summary');
+      appendReconciliationSheets(wb, {
+        title: `Annual Report ${fy.label}`,
+        filterRows: [
+          ['Rent months', `${fy.start} to ${fy.end}`],
+          ['Customer / Unit', annualCustomer ? annualCustomer.label : 'All'],
+        ],
+        data,
+      });
 
       const custSuffix = annualCustomer
         ? `_${annualCustomer.customer.customer_name.replace(/\s+/g,'_')}${annualCustomer.unit ? `_U${annualCustomer.unit.unit_no}` : ''}`
         : '';
       XLSX.writeFile(wb, `Annual_Report_${fy.label.replace(/ /g, '_')}${custSuffix}${showTds ? '' : '_ExclTDS'}.xlsx`);
+      if (data.excluded.length) toast.warning(`${data.excluded.length} possible duplicate payment(s) excluded — see the "Exceptions" sheet.`, { autoClose: 10000 });
       toast.success('Annual report downloaded!');
-    } catch (err) { console.error(err); toast.error('Failed to generate annual report'); }
+    } catch (err) { reportErrorToast(err, 'Failed to generate annual report'); }
     finally { setLoad('annual', false); }
   };
 
@@ -732,12 +865,9 @@ const Reports = () => {
   const generateTDSReport = async () => {
     setLoad('tds', true);
     try {
-      const range  = getQuarterRange(fy, tdsQuarter);
-      const result = await paymentService.getPaymentHistory({
-        startDate: range.start, endDate: range.end, limit: 5000,
-      });
-      let raw = result.data.payments || [];
-      raw = applyCustomerFilter(raw, tdsCustomer);
+      const qMonths = getQuarterMonths(fy, tdsQuarter);
+      const data    = await loadReportData(qMonths, tdsCustomer);
+      const raw     = data.included;
 
       const grp      = applyTdsMode(groupPayments(raw, { tdsOnly: true }), tdsTdsMode);
       const showTds  = tdsTdsMode === 'include';
@@ -889,13 +1019,23 @@ const Reports = () => {
       const wsC = XLSX.utils.json_to_sheet(cRows);
       styleHeader(wsC, custBase);
       XLSX.utils.book_append_sheet(wb, wsC, 'Customer Summary');
+      appendReconciliationSheets(wb, {
+        title: `TDS Report ${tdsQuarter} ${fy.label}`,
+        filterRows: [
+          ['Rent months', `${qMonths.monthFrom} to ${qMonths.monthTo}`],
+          ['Customer / Unit', tdsCustomer ? tdsCustomer.label : 'All'],
+          ['Detail sheet', 'Only unit-months with TDS are listed; the table below covers all rows loaded'],
+        ],
+        data,
+      });
 
       const custSuffix = tdsCustomer
         ? `_${tdsCustomer.customer.customer_name.replace(/\s+/g,'_')}${tdsCustomer.unit ? `_U${tdsCustomer.unit.unit_no}` : ''}`
         : '';
       XLSX.writeFile(wb, `TDS_Report_${tdsQuarter}_${fy.label.replace(/ /g, '_')}${custSuffix}${showTds ? '' : '_ExclTDS'}.xlsx`);
+      if (data.excluded.length) toast.warning(`${data.excluded.length} possible duplicate payment(s) excluded — see the "Exceptions" sheet.`, { autoClose: 10000 });
       toast.success('TDS report downloaded!');
-    } catch (err) { console.error(err); toast.error('Failed to generate TDS report'); }
+    } catch (err) { reportErrorToast(err, 'Failed to generate TDS report'); }
     finally { setLoad('tds', false); }
   };
 
@@ -907,25 +1047,10 @@ const Reports = () => {
       const cust = stmtCustomer.customer;
       const unit = stmtCustomer.unit;
 
-      // Fetch by customer_id; filter to specific unit if one was selected
-      const result = await paymentService.getPaymentHistory({
-        customerId: cust.customer_id || cust.id,
-        limit: 1000,
-      });
-      let raw = result.data.payments || [];
-
-      // Filter to the selected unit if applicable
-      if (unit?.id) {
-        raw = raw.filter((p) => p.customer_unit_id === unit.id);
-      }
-
-      if (!raw.length && cust.customer_name) {
-        const allResult = await paymentService.getPaymentHistory({ limit: 5000 });
-        raw = (allResult.data.payments || []).filter((p) => {
-          const nameMatch = (p.customer_name || '').toLowerCase() === (cust.customer_name || '').toLowerCase();
-          return unit?.id ? nameMatch && p.customer_unit_id === unit.id : nameMatch;
-        });
-      }
+      // Server-side filter by the selected UNIT (or all units of this customer),
+      // every page, cancelled excluded. No name-based fallback (names are not unique).
+      const data = await loadReportData({}, stmtCustomer);
+      const raw  = data.included;
 
       const wb      = XLSX.utils.book_new();
       const showTds = stmtTdsMode === 'include';
@@ -938,12 +1063,12 @@ const Reports = () => {
         const rows = grp.map((g, i) => ({
           'S.No':            i + 1,
           'Payment Month':   g.payment_month || '',
-          'Payment Date':    g.payment_date ? formatDate(g.payment_date) : '',
+          'Payment Date':    groupDateLabel(g),
           'Period / Type':   g.payment_period || g.agreement_type || '',
           'Unit No':         g.unit_no        || '',
           'Floor No':        g.floor_no       || '',
           'Inst Count':      g._count,
-          'Base Rent (₹)':   r0(g.base_rent),
+          'Base Rent (₹)':   r0(g._base),
           'Escalation (%)':  parseFloat(g.escalation_rate) || 0,
           'Gross Rent (₹)':  r0(g._gross),
           ...(showTds ? { 'TDS (₹)': r0(g._tds) } : {}),
@@ -983,11 +1108,11 @@ const Reports = () => {
         const ws = XLSX.utils.json_to_sheet(rows);
         const baseCols = hasGst
           ? (showTds
-              ? [{wch:5},{wch:14},{wch:14},{wch:26},{wch:10},{wch:8},{wch:6},{wch:14},{wch:12},{wch:14},{wch:12},{wch:14},{wch:12},{wch:12},{wch:14},{wch:14},{wch:10}]
-              : [{wch:5},{wch:14},{wch:14},{wch:26},{wch:10},{wch:8},{wch:6},{wch:14},{wch:12},{wch:14},{wch:14},{wch:12},{wch:12},{wch:14},{wch:14},{wch:10}])
+              ? [{wch:5},{wch:14},{wch:30},{wch:26},{wch:10},{wch:8},{wch:6},{wch:14},{wch:12},{wch:14},{wch:12},{wch:14},{wch:12},{wch:12},{wch:14},{wch:14},{wch:10}]
+              : [{wch:5},{wch:14},{wch:30},{wch:26},{wch:10},{wch:8},{wch:6},{wch:14},{wch:12},{wch:14},{wch:14},{wch:12},{wch:12},{wch:14},{wch:14},{wch:10}])
           : (showTds
-              ? [{wch:5},{wch:14},{wch:14},{wch:26},{wch:10},{wch:8},{wch:6},{wch:14},{wch:12},{wch:14},{wch:12},{wch:14},{wch:10}]
-              : [{wch:5},{wch:14},{wch:14},{wch:26},{wch:10},{wch:8},{wch:6},{wch:14},{wch:12},{wch:14},{wch:14},{wch:10}]);
+              ? [{wch:5},{wch:14},{wch:30},{wch:26},{wch:10},{wch:8},{wch:6},{wch:14},{wch:12},{wch:14},{wch:12},{wch:14},{wch:10}]
+              : [{wch:5},{wch:14},{wch:30},{wch:26},{wch:10},{wch:8},{wch:6},{wch:14},{wch:12},{wch:14},{wch:14},{wch:10}]);
 
         styleHeader(ws, injectSplitWidths(baseCols, splitCols, 1));
         styleTotalsRow(ws, rows.length, 'E0F2FE');
@@ -1024,11 +1149,17 @@ const Reports = () => {
       ]);
       infoWs['!cols'] = [{ wch: 24 }, { wch: 36 }];
       XLSX.utils.book_append_sheet(wb, infoWs, 'Customer Info');
+      appendReconciliationSheets(wb, {
+        title: `Statement ${cust.customer_name || ''}`,
+        filterRows: [['Customer / Unit', stmtCustomer.label]],
+        data,
+      });
 
       const unitSuffix = unit ? `_U${unit.unit_no}` : '';
       XLSX.writeFile(wb, `Statement_${(cust.customer_name || 'Customer').replace(/\s+/g, '_')}${unitSuffix}${showTds ? '' : '_ExclTDS'}.xlsx`);
+      if (data.excluded.length) toast.warning(`${data.excluded.length} possible duplicate payment(s) excluded — see the "Exceptions" sheet.`, { autoClose: 10000 });
       toast.success('Statement downloaded!');
-    } catch (err) { console.error(err); toast.error('Failed to generate statement'); }
+    } catch (err) { reportErrorToast(err, 'Failed to generate statement'); }
     finally { setLoad('customer', false); }
   };
 

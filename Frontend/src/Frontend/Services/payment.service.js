@@ -1,4 +1,5 @@
 import api from '../Config/api';
+import { fetchAllPages, REPORT_TIMEOUT } from '../Utils/fetchAllPages';
 
 const paymentService = {
 
@@ -64,9 +65,27 @@ const paymentService = {
   resetOrderCreated: (paymentIds) =>
     api.post('/payments/reset-order-created', { paymentIds }).then((r) => r.data),
 
-  getPaymentHistory: async (params = {}) => {
-    const res = await api.get('/payments/history', { params });
+  getPaymentHistory: async (params = {}, config = {}) => {
+    const res = await api.get('/payments/history', { params, ...config });
     return { success: true, data: res.data.data };
+  },
+
+  /**
+   * Fetch EVERY payment matching the filters, page by page (no silent truncation).
+   * Throws if the number of rows received differs from the server's total.
+   */
+  getAllPaymentHistory: async (params = {}) => {
+    const rows = await fetchAllPages(
+      (p) => api.get('/payments/history', { params: { ...params, ...p }, timeout: REPORT_TIMEOUT })
+        .then((r) => ({ items: r.data.data.payments || [], pagination: r.data.data.pagination })),
+    );
+    return rows;
+  },
+
+  /** Read-only SQL totals for the same filters — used to reconcile Excel output. */
+  getReportTotals: async (params = {}) => {
+    const res = await api.get('/payments/report-totals', { params, timeout: REPORT_TIMEOUT });
+    return res.data.data;
   },
 
   getPaymentStats: async (month = null, agreementType = null) => {
@@ -85,8 +104,13 @@ const paymentService = {
     return { success: true, data: res.data.data };
   },
 
-  getPaymentByMonth: async (customerId, rentMonth) => {
-    const res = await api.get('/payments/by-month', { params: { customerId, rentMonth } });
+  // Pass customerUnitId so a multi-flat customer sees THIS flat's saved payment,
+  // not another flat's record for the same month.
+  getPaymentByMonth: async (customerId, rentMonth, customerUnitId = null) => {
+    const params = { rentMonth };
+    if (customerUnitId) params.customerUnitId = customerUnitId;
+    else params.customerId = customerId;
+    const res = await api.get('/payments/by-month', { params });
     return { success: true, data: res.data.data };
   },
 };
