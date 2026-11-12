@@ -690,7 +690,7 @@ const forgotPassword = async (req, res) => {
       userResult = await query(
         `SELECT id, name, email, is_active
          FROM users
-         WHERE email = $1 AND deleted_at IS NULL`,
+         WHERE LOWER(TRIM(email)) = $1 AND deleted_at IS NULL`,
         [normalizedEmail]
       );
     } catch (dbErr) {
@@ -701,6 +701,10 @@ const forgotPassword = async (req, res) => {
     // SECURITY: never reveal whether an account exists or is deactivated.
     // Unknown / inactive emails get the exact same 200 response, but no OTP.
     if (!userResult.rows.length || !userResult.rows[0].is_active) {
+      // Server-side only — response stays generic (no account enumeration)
+      console.warn(
+        `[forgotPassword] No OTP sent — reason: ${userResult.rows.length ? 'inactive' : 'unknown or deleted'} account`
+      );
       await query(
         `INSERT INTO security_events (event_type, severity, ip_address, details)
          VALUES ($1, $2, $3, $4)`,

@@ -316,15 +316,54 @@
 
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
-const { query } = require('../config/database');
+const { query, transaction } = require('../config/database');
 const {
   sendWelcomeEmail,
-} = require('../config/emailService'); // ← adjust path if your file is in /services/
+} = require('../config/emailService');
 
 const VALID_ROLES       = ['ADMIN', 'USER'];
 const VALID_DEPARTMENTS = ['R-ONE ACCOUNTS', 'R-ONE CRM', 'R-ONE AUDIT'];
 
 const sanitize = (val) => (typeof val === 'string' ? val.trim() : val);
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Quote a SQL identifier (names come from pg_catalog, never from user input)
+const qi = (name) => `"${String(name).replace(/"/g, '""')}"`;
+
+// Tables whose rows belong to the user's login session / password reset
+const AUTH_TABLES = new Set(['refresh_tokens', 'password_reset_otps', 'password_reset_tokens']);
+// Log tables — detached (user_id = NULL) on hard delete
+const LOG_TABLES  = new Set(['audit_logs', 'security_events']);
+
+/*
+ * Discover every FK column that references users(id) straight from the live
+ * database, so the delete logic stays correct even if prod schema drifts from
+ * schema.sql. Cached for the process lifetime.
+ */
+let userFkCache = null;
+const getUserForeignKeys = async (client) => {
+  if (userFkCache) return userFkCache;
+  const r = await client.query(
+    `SELECT c.conrelid::regclass::text AS tbl, a.attname AS col
+     FROM pg_constraint c
+     JOIN pg_attribute a
+       ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+     WHERE c.contype = 'f'
+       AND c.confrelid = 'users'::regclass
+       AND c.conrelid <> 'users'::regclass`
+  );
+  const groups = { auth: [], logs: [], business: [] };
+  for (const row of r.rows) {
+    const tbl = row.tbl.replace(/^public\./, '').replace(/"/g, '');
+    const entry = { tbl, col: row.col };
+    if (AUTH_TABLES.has(tbl))     groups.auth.push(entry);
+    else if (LOG_TABLES.has(tbl)) groups.logs.push(entry);
+    else                          groups.business.push(entry);
+  }
+  userFkCache = groups;
+  return groups;
+};
 
 
 // ── GET /api/users ─────────────────────────────────────────────────────────────
@@ -494,9 +533,15 @@ exports.createUser = async (req, res) => {
       password:   plainPassword,
       role,
       department,
-    }).catch((err) =>
-      console.error('[createUser] Welcome email failed (non-fatal):', err.message)
-    );
+    }).catch((err) => {
+      console.error('[createUser] Welcome email failed (non-fatal):', err.message);
+      // Persist the failure so it is visible outside the server console
+      query(
+        `INSERT INTO security_events (event_type, severity, user_id, ip_address, details)
+         VALUES ('WELCOME_EMAIL_FAILED', 'MEDIUM', $1, $2, $3)`,
+        [result.rows[0].id, req.ip || null, JSON.stringify({ email, error: err.message })]
+      ).catch(() => {});
+    });
 
     return res.status(201).json({
       success: true,
@@ -639,26 +684,92 @@ exports.deleteUser = async (req, res) => {
         error:   'You cannot delete your own account',
       });
 
-    const target = await query(
-      `SELECT role FROM users WHERE id = $1 AND deleted_at IS NULL`,
-      [id]
-    );
-    if (!target.rows.length)
+    if (!UUID_RE.test(id))
       return res.status(404).json({ success: false, error: 'User not found' });
-    if (target.rows[0].role === 'SUPERADMIN')
-      return res.status(403).json({
-        success: false,
-        error:   'Cannot delete a Super Admin account',
-      });
 
-    await query(
-      `UPDATE users
-       SET deleted_at = NOW(), updated_at = NOW()
-       WHERE id = $1 AND deleted_at IS NULL`,
-      [id]
-    );
+    /*
+     * Hybrid delete (safe for prod):
+     *   - Auth data (OTPs, reset tokens, refresh tokens) is always removed,
+     *     so the user is logged out immediately and no FK blocks the delete.
+     *   - If the user owns business records (customers, payments, ...), the row
+     *     is SOFT-deleted to keep the audit trail; the email is renamed so the
+     *     address can be reused for a new account.
+     *   - Otherwise the row is HARD-deleted.
+     */
+    const outcome = await transaction(async (client) => {
+      const target = await client.query(
+        `SELECT id, role, email FROM users
+         WHERE id = $1 AND deleted_at IS NULL
+         FOR UPDATE`,
+        [id]
+      );
+      if (!target.rows.length) return { status: 404 };
+      if (target.rows[0].role === 'SUPERADMIN') return { status: 403 };
 
-    return res.status(200).json({ success: true, message: 'User deleted successfully' });
+      const fks = await getUserForeignKeys(client);
+
+      // 1. Remove auth data
+      for (const { tbl, col } of fks.auth) {
+        await client.query(`DELETE FROM ${qi(tbl)} WHERE ${qi(col)} = $1`, [id]);
+      }
+
+      // 2. Does the user own any business records?
+      let hasBusinessRefs = false;
+      if (fks.business.length) {
+        const existsSql = fks.business
+          .map(({ tbl, col }) => `EXISTS (SELECT 1 FROM ${qi(tbl)} WHERE ${qi(col)} = $1)`)
+          .join(' OR ');
+        const r = await client.query(`SELECT (${existsSql}) AS has_refs`, [id]);
+        hasBusinessRefs = r.rows[0].has_refs;
+      }
+
+      let mode;
+      if (hasBusinessRefs) {
+        // 3a. Soft delete + free the email address
+        await client.query(
+          `UPDATE users
+           SET deleted_at = NOW(),
+               updated_at = NOW(),
+               is_active  = false,
+               email      = LEFT(email, 200) || '#deleted#' || id::text
+           WHERE id = $1`,
+          [id]
+        );
+        mode = 'soft';
+      } else {
+        // 3b. Hard delete — detach log rows first (works even if prod FKs
+        //     are not yet ON DELETE SET NULL)
+        for (const { tbl, col } of fks.logs) {
+          await client.query(`UPDATE ${qi(tbl)} SET ${qi(col)} = NULL WHERE ${qi(col)} = $1`, [id]);
+        }
+        await client.query(`DELETE FROM users WHERE id = $1`, [id]);
+        mode = 'hard';
+      }
+
+      // 4. Audit (attributed to the admin who performed the delete)
+      await client.query(
+        `INSERT INTO audit_logs (user_id, action, resource_type, resource_id, changes, ip_address, user_agent, status)
+         VALUES ($1, 'USER_DELETED', 'users', $2, $3, $4, $5, 'SUCCESS')`,
+        [
+          requesterId, id,
+          JSON.stringify({ mode, email: target.rows[0].email }),
+          req.ip || null, req.get('user-agent') || null,
+        ]
+      );
+
+      return { status: 200, mode };
+    });
+
+    if (outcome.status === 404)
+      return res.status(404).json({ success: false, error: 'User not found' });
+    if (outcome.status === 403)
+      return res.status(403).json({ success: false, error: 'Cannot delete a Super Admin account' });
+
+    return res.status(200).json({
+      success: true,
+      message: 'User deleted successfully',
+      data:    { id, mode: outcome.mode },
+    });
   } catch (error) {
     console.error('deleteUser error:', error);
     return res.status(500).json({ success: false, error: 'Internal server error' });

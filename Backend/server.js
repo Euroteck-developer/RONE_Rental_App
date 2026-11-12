@@ -94,6 +94,14 @@ const PORT = process.env.PORT || 8080;
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+
+  // Surface SMTP misconfiguration at startup instead of on the first email
+  const missingSmtp = ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASS'].filter((k) => !process.env[k]);
+  if (missingSmtp.length) {
+    console.error(`[Email] SMTP NOT CONFIGURED — missing env: ${missingSmtp.join(', ')}. OTP & welcome emails will fail.`);
+  } else {
+    require('./config/emailService').verifyConnection();
+  }
 });
 
 module.exports = app;
